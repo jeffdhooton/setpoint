@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 # The full self-tuning surface. Anything not listed here (gate, budget,
@@ -32,9 +33,17 @@ def apply_overlay(spec, knobs: dict) -> None:
     if not knobs:
         return
     if "max_turns" in knobs and "execute.max_turns" not in spec.explicit:
-        spec.execute.max_turns = _clamp("max_turns", knobs["max_turns"])
+        try:
+            spec.execute.max_turns = _clamp("max_turns", knobs["max_turns"])
+        except (TypeError, ValueError) as e:
+            print(f"tuning: ignoring invalid max_turns overlay value "
+                  f"{knobs['max_turns']!r}: {e}", file=sys.stderr)
     if "no_progress_after" in knobs and "stop.no_progress_after" not in spec.explicit:
-        spec.stop.no_progress_after = _clamp("no_progress_after", knobs["no_progress_after"])
+        try:
+            spec.stop.no_progress_after = _clamp("no_progress_after", knobs["no_progress_after"])
+        except (TypeError, ValueError) as e:
+            print(f"tuning: ignoring invalid no_progress_after overlay value "
+                  f"{knobs['no_progress_after']!r}: {e}", file=sys.stderr)
     if knobs.get("plan_hint"):
         spec.execute.plan_hint = str(knobs["plan_hint"])[:PLAN_HINT_MAX]
 
@@ -50,11 +59,24 @@ class Overlay:
             return {"versions": []}
         try:
             data = json.loads(self.path.read_text())
-            if not isinstance(data, dict) or not isinstance(data.get("versions"), list):
-                return {"versions": []}
-            return data
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"tuning: overlay unreadable, ignoring ({self.path}): {e}",
+                  file=sys.stderr)
             return {"versions": []}
+        if not isinstance(data, dict) or not isinstance(data.get("versions"), list):
+            print(f"tuning: overlay malformed, ignoring ({self.path})", file=sys.stderr)
+            return {"versions": []}
+        versions = data["versions"]
+        # Only the last element is ever read (load()/reconcile() both key off
+        # versions[-1], and _read() re-parses from disk on every call — a
+        # revert's pop() is followed by a fresh _read() next time, not a
+        # reuse of this list — so validating just the tail is sufficient.
+        if versions:
+            last = versions[-1]
+            if not isinstance(last, dict) or not isinstance(last.get("knobs"), dict):
+                print(f"tuning: overlay malformed, ignoring ({self.path})", file=sys.stderr)
+                return {"versions": []}
+        return data
 
     def _write(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

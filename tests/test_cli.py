@@ -47,6 +47,43 @@ def test_cmd_run_converges(tmp_path, monkeypatch):
     assert state["status"] == "passed"
 
 
+def test_run_loop_delivers_even_when_lesson_bookkeeping_fails(tmp_path, monkeypatch):
+    # A filesystem error out of the lesson store (e.g. unwritable
+    # ~/.setpoint/lessons) must not skip deliver() — the passed run's
+    # undelivered work would otherwise be destroyed by the worktree cleanup
+    # in run_loop's finally block.
+    import setpoint.lessons as lessons
+
+    repo = _make_repo(tmp_path)
+    spec_path = tmp_path / "loop.yaml"
+    spec_path.write_text(
+        f"name: cli-demo-bookkeeping\ngoal: make check pass\ntype: coding\n"
+        f"workspace:\n  repo: {repo}\n  worktree: false\n"
+        f"execute:\n  tools: [write]\n"
+        f"verify:\n  gate: command\n  command: 'sh check.sh'\n"
+        f"stop:\n  max_iters: 3\nbudget:\n  max_usd: 5.0\n")
+
+    class WinningExecutor:
+        def execute(self, system, task, tools, model, cwd, on_event):
+            (Path(cwd) / "PASS").write_text("")
+            return ExecuteResult(text="created PASS", usage=Usage(100, 50, 0))
+
+    def boom(*a, **k):
+        raise OSError("unwritable lesson store")
+
+    monkeypatch.setattr(cli, "_build_executor", lambda spec: WinningExecutor())
+    monkeypatch.setattr(cli, "_build_plan_client",
+                        lambda spec: _fake_plan_client())
+    monkeypatch.setattr(lessons, "promote_validated", boom)
+    monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
+
+    from setpoint.spec import load_spec
+    spec = load_spec(str(spec_path))
+
+    state = cli.run_loop(spec)
+    assert state.status == "passed"
+
+
 def _fake_plan_client():
     def create(**kw):
         return SimpleNamespace(

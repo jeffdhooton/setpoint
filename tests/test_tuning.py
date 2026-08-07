@@ -1,5 +1,8 @@
 import json
+import os
 from types import SimpleNamespace
+
+import pytest
 
 from setpoint.tuning import (BOUNDS, Overlay, apply_overlay, better_or_equal,
                              slug)
@@ -95,3 +98,43 @@ def test_overlay_file_with_json_number_ignored(tmp_path):
     ov.path.write_text("42")
     assert ov.load() == {}
     assert ov.reconcile({"passed": True, "iters": 1, "usd": 0}) == "empty"
+
+
+def test_overlay_versions_list_of_non_dicts_ignored(tmp_path):
+    # {"versions": [42]} used to raise TypeError in load() (int has no
+    # subscript). Malformed tail element -> treated as empty overlay.
+    ov = Overlay("k", root=tmp_path)
+    ov.path.parent.mkdir(parents=True, exist_ok=True)
+    ov.path.write_text(json.dumps({"versions": [42]}))
+    assert ov.load() == {}
+    assert ov.reconcile({"passed": True, "iters": 1, "usd": 0}) == "empty"
+
+
+def test_overlay_version_missing_knobs_key_ignored(tmp_path):
+    # {"versions": [{"stats": {}}]} used to raise KeyError in load() (no
+    # "knobs" key). Malformed tail element -> treated as empty overlay.
+    ov = Overlay("k", root=tmp_path)
+    ov.path.parent.mkdir(parents=True, exist_ok=True)
+    ov.path.write_text(json.dumps({"versions": [{"stats": {}}]}))
+    assert ov.load() == {}
+    assert ov.reconcile({"passed": True, "iters": 1, "usd": 0}) == "empty"
+
+
+def test_apply_overlay_non_numeric_knob_is_skipped(tmp_path):
+    # apply_overlay used to raise ValueError from int("abc"). A bad knob
+    # value must be skipped, leaving the spec's default intact.
+    spec = _spec(max_turns=25)
+    apply_overlay(spec, {"max_turns": "abc"})
+    assert spec.execute.max_turns == 25
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_overlay_unreadable_file_ignored(tmp_path):
+    ov = Overlay("k", root=tmp_path)
+    ov.path.parent.mkdir(parents=True, exist_ok=True)
+    ov.path.write_text(json.dumps({"versions": [{"knobs": {"max_turns": 30}, "stats": {}}]}))
+    ov.path.chmod(0o000)
+    try:
+        assert ov.load() == {}
+    finally:
+        ov.path.chmod(0o644)

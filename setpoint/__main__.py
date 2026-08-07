@@ -73,14 +73,23 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
         cycle = Cycle(spec, executor, gate, memory, budget, ui, plan_client,
                       abort_check=abort_check, lesson_store=lesson_store)
         state = cycle.run(cwd=cwd)
-        promoted = promote_validated(state, spec.goal, lesson_store)
 
-        if spec.memory.scry_export and promoted:
-            from setpoint.scry_export import export_lessons
-            export_lessons(promoted, spec.workspace.repo)
+        # Lesson promotion, scry export, and retro tuning are best-effort
+        # bookkeeping — a filesystem error here (e.g. an unwritable
+        # ~/.setpoint/lessons or tuning dir) must never skip deliver() below,
+        # or the finally block's worktree cleanup would destroy a passed
+        # run's undelivered work.
+        try:
+            promoted = promote_validated(state, spec.goal, lesson_store)
 
-        from setpoint.retro import run_retro
-        run_retro(state, overlay, memory.root)
+            if spec.memory.scry_export and promoted:
+                from setpoint.scry_export import export_lessons
+                export_lessons(promoted, spec.workspace.repo)
+
+            from setpoint.retro import run_retro
+            run_retro(state, overlay, memory.root)
+        except Exception as e:
+            print(f"self-improvement bookkeeping skipped: {e}", file=sys.stderr)
 
         # deliver() must run while `cwd` still exists — a worktree cwd is
         # removed by wt.cleanup() below, so this has to happen inside the try.

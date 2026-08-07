@@ -363,4 +363,27 @@ verify: {gate: command, command: "true"}
     spec = load_spec(str(p))
     assert spec.execute.max_turns == 25
     assert spec.explicit == []
+
+
+def test_stop_no_progress_after_null_is_explicit_and_stays_none(tmp_path):
+    # A deliberate `stop: {no_progress_after: null}` in YAML must be treated
+    # as user-pinned (explicit), not "unset" — otherwise the tuning overlay
+    # can silently re-enable early stopping the user turned off.
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text("""
+name: t
+goal: g
+type: coding
+workspace: {repo: /tmp/x}
+verify: {gate: command, command: "true"}
+stop: {no_progress_after: null}
+""")
+    from setpoint.spec import load_spec
+    spec = load_spec(str(p))
+    assert spec.stop.no_progress_after is None
+    assert "stop.no_progress_after" in spec.explicit
+
+    from setpoint.tuning import apply_overlay
+    apply_overlay(spec, {"no_progress_after": 3})
+    assert spec.stop.no_progress_after is None
     assert spec.execute.plan_hint == ""

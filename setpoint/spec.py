@@ -199,7 +199,7 @@ def load_spec(path: str) -> LoopSpec:
     explicit = []
     if "max_turns" in ex_raw:
         explicit.append("execute.max_turns")
-    if s_raw.get("no_progress_after") is not None:
+    if "no_progress_after" in s_raw:
         explicit.append("stop.no_progress_after")
 
     return LoopSpec(
