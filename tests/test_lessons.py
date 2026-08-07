@@ -83,3 +83,48 @@ def test_promote_text_only_updates_if_fresher(tmp_path):
     assert loaded[0].lesson == "new text"
     assert loaded[0].hits == 2
     assert loaded[0].ts == "2026-08-07T00:00:00"
+
+
+def test_promote_validated_rules(tmp_path):
+    # A validated by progress (next iter's fingerprint differs), B validated by
+    # the pass that follows it.
+    from setpoint.lessons import promote_validated
+    from setpoint.memory import IterRecord, RunState
+    state = RunState(name="t", status="passed", iters=[
+        IterRecord(n=1, plan="", summary="", passed=False, feedback="f1", usd=0,
+                   lesson="lesson A", fingerprint="fpA"),
+        IterRecord(n=2, plan="", summary="", passed=False, feedback="f2", usd=0,
+                   lesson="lesson B", fingerprint="fpB"),
+        IterRecord(n=3, plan="", summary="", passed=True, feedback="ok", usd=0),
+    ])
+    store = LessonStore("k", root=tmp_path)
+    promoted = promote_validated(state, "the goal", store)
+    fps = {sl.fingerprint for sl in promoted}
+    assert fps == {"fpA", "fpB"}
+    assert all(sl.goal == "the goal" for sl in promoted)
+
+
+def test_promote_validated_skips_unvalidated_tail_and_repeats(tmp_path):
+    from setpoint.lessons import promote_validated
+    from setpoint.memory import IterRecord, RunState
+    state = RunState(name="t", status="stopped", iters=[
+        IterRecord(n=1, plan="", summary="", passed=False, feedback="f", usd=0,
+                   lesson="lesson A", fingerprint="fpA"),
+        IterRecord(n=2, plan="", summary="", passed=False, feedback="f", usd=0,
+                   lesson="lesson A", fingerprint="fpA"),  # same failure again
+    ])
+    store = LessonStore("k", root=tmp_path)
+    assert promote_validated(state, "g", store) == []
+    assert store.load() == []
+
+
+def test_promote_validated_skips_empty_lessons(tmp_path):
+    from setpoint.lessons import promote_validated
+    from setpoint.memory import IterRecord, RunState
+    state = RunState(name="t", status="passed", iters=[
+        IterRecord(n=1, plan="", summary="", passed=False, feedback="f", usd=0,
+                   lesson="", fingerprint="fpA"),   # fallback lesson: no text
+        IterRecord(n=2, plan="", summary="", passed=True, feedback="ok", usd=0),
+    ])
+    store = LessonStore("k", root=tmp_path)
+    assert promote_validated(state, "g", store) == []

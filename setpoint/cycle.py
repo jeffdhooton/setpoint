@@ -49,7 +49,7 @@ _LESSONS_LINE = re.compile(r"^\s*lessons\s*:", re.IGNORECASE | re.MULTILINE)
 
 class Cycle:
     def __init__(self, spec, executor, gate, memory: Memory, budget: Budget, ui,
-                 plan_client, abort_check=None):
+                 plan_client, abort_check=None, lesson_store=None):
         self.spec = spec
         self.executor = executor
         self.gate = gate
@@ -58,6 +58,15 @@ class Cycle:
         self.ui = ui
         self.plan_client = plan_client
         self.abort_check = abort_check
+        self.lesson_store = lesson_store
+
+    def _stored_lessons(self):
+        if self.lesson_store is None:
+            return []
+        try:
+            return self.lesson_store.top(10)
+        except Exception:
+            return []
 
     def _discover(self) -> str:
         parts = [self.spec.context.notes] if self.spec.context.notes else []
@@ -66,6 +75,10 @@ class Cycle:
             if p.exists():
                 parts.append(f"### {f}\n{p.read_text()[:4000]}")
         parts.append(self.memory.context_block())
+        stored = self._stored_lessons()
+        if stored:
+            parts.append("## Lessons from previous runs\n"
+                         + "\n".join(f"- [{sl.fingerprint}] {sl.lesson}" for sl in stored))
         return "\n\n".join(parts)
 
     def _plan(self, context: str, last: IterRecord | None,
@@ -105,8 +118,12 @@ class Cycle:
         return resp.choices[0].message.content or "", usage
 
     def _lessons(self) -> list[tuple[str, str]]:
-        """(fingerprint, lesson_text) pairs from this run, deduped, oldest first."""
+        """(fingerprint, lesson_text) pairs: stored lessons first, then this run's,
+        deduped by fingerprint."""
         out: dict[str, str] = {}
+        for sl in self._stored_lessons():
+            if sl.lesson:
+                out.setdefault(sl.fingerprint, sl.lesson)
         for r in self.memory.load().iters:
             if r.lesson and r.fingerprint not in out:
                 out[r.fingerprint] = r.lesson
@@ -117,7 +134,8 @@ class Cycle:
         tools = build_registry(self.spec.execute.tools)
         last: IterRecord | None = None
         no_progress = 0
-        priors: list[tuple[str, str, str]] = []
+        priors: list[tuple[str, str, str]] = [
+            (sl.fingerprint, sl.normalized, sl.category) for sl in self._stored_lessons()]
         prior = len(self.memory.load().iters)  # resume-aware: continue the spine's numbering
 
         # PREFLIGHT: run a cheap gate once cold, before any work. A gate whose
@@ -213,8 +231,14 @@ class Cycle:
                 last = rec
                 break
 
-            # no-progress tracking: identical feedback OR a repeat of a known lesson
-            if (last is not None and last.feedback == rec.feedback) or rec.repeat_of:
+            # no-progress tracking: identical feedback OR a repeat of a known lesson.
+            # Gated on `last is not None`: a lesson_store can prime `priors` before
+            # iteration 1 ever runs, so a first-iteration failure can already carry
+            # repeat_of (a stored-lesson match) — that's a useful immediate-strike
+            # signal for logging/DISCOVER, but with no prior *in-run* attempt yet it
+            # must not by itself count as "no progress" (nothing has failed to
+            # progress from within this run).
+            if last is not None and (last.feedback == rec.feedback or rec.repeat_of):
                 no_progress += 1
             else:
                 no_progress = 0

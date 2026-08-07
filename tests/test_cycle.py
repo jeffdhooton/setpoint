@@ -476,6 +476,41 @@ def test_repeat_fingerprint_counts_toward_no_progress(tmp_path):
     assert state.iters[2].repeat_of == state.iters[0].fingerprint
 
 
+def test_stored_lessons_injected_into_discover_and_strike(tmp_path):
+    from setpoint.analyze import fingerprint, normalize_feedback
+    from setpoint.lessons import LessonStore, StoredLesson
+    fb = "FAILED tests/test_x.py:10: AssertionError: expected 200 got 500"
+    store = LessonStore("k", root=tmp_path / "lessons")
+    store.promote([StoredLesson(ts="2026-08-01T00:00:00", run="old", goal="g",
+                                fingerprint=fingerprint(fb),
+                                normalized=normalize_feedback(fb), category="assertion",
+                                lesson="mock the upstream, don't hit the network")])
+
+    class SameFailureGate:
+        def verify(self, cwd, on_event):
+            return GateResult(passed=False, feedback=fb)
+
+    prompts = []
+
+    def create(**kw):
+        prompts.append(kw["messages"][-1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="p\nLessons: applies"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    spec = _spec(tmp_path, max_iters=99, no_progress=2)
+    state = Cycle(spec, FakeExecutor(), SameFailureGate(),
+                  Memory("t", root=tmp_path / "r"), Budget(100.0, None, PRICING),
+                  StubUI(), client, lesson_store=store).run(cwd=tmp_path)
+    assert "mock the upstream" in prompts[0]                    # DISCOVER injection
+    assert state.iters[0].repeat_of == fingerprint(fb)          # immediate strike
+    assert state.status == "stopped" and len(state.iters) == 2  # struck out fast
+
+
 def test_distinct_failures_reset_no_progress(tmp_path):
     class RotatingGate:
         def __init__(self):

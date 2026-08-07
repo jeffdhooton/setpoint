@@ -48,6 +48,9 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
         if memory.root.exists():
             shutil.rmtree(memory.root)
 
+    from setpoint.lessons import LessonStore, promote_validated, repo_key
+    lesson_store = LessonStore(repo_key(spec.workspace.repo))
+
     budget = Budget(spec.budget.max_usd, spec.budget.max_tokens, PRICING,
                      wall_clock_secs=spec.stop.wall_clock_secs)
     if ui is None:
@@ -63,8 +66,9 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
     cwd, wt = prepare_workspace(spec)
     try:
         cycle = Cycle(spec, executor, gate, memory, budget, ui, plan_client,
-                      abort_check=abort_check)
+                      abort_check=abort_check, lesson_store=lesson_store)
         state = cycle.run(cwd=cwd)
+        promoted = promote_validated(state, spec.goal, lesson_store)
 
         # deliver() must run while `cwd` still exists — a worktree cwd is
         # removed by wt.cleanup() below, so this has to happen inside the try.

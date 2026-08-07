@@ -76,3 +76,36 @@ class LessonStore:
         tmp.write_text("".join(json.dumps(asdict(sl)) + "\n" for sl in kept))
         tmp.replace(self.path)
         return kept
+
+
+from datetime import datetime, timezone
+
+
+def promote_validated(state, goal: str, store: LessonStore,
+                      now: str | None = None) -> list[StoredLesson]:
+    """Promote lessons whose next iteration passed or changed the failure.
+    `state` is a setpoint.memory.RunState (duck-typed to avoid a cycle)."""
+    ts = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    candidates = []
+    iters = state.iters
+    for i, r in enumerate(iters):
+        if r.passed or not r.lesson or not r.fingerprint:
+            continue
+        if i + 1 >= len(iters):
+            continue  # nothing after it: unvalidated
+        nxt = iters[i + 1]
+        if nxt.passed or (nxt.fingerprint and nxt.fingerprint != r.fingerprint):
+            candidates.append(StoredLesson(
+                ts=ts, run=state.name, goal=goal,
+                fingerprint=r.fingerprint,
+                normalized="",  # filled below from analyze to avoid storing raw feedback twice
+                category=r.category, lesson=r.lesson))
+    if not candidates:
+        return []
+    # normalized text is recomputable from feedback; store it for near-matching
+    from setpoint.analyze import normalize_feedback
+    by_fp = {r.fingerprint: r.feedback for r in iters if r.fingerprint}
+    for sl in candidates:
+        sl.normalized = normalize_feedback(by_fp.get(sl.fingerprint, ""))
+    store.promote(candidates)
+    return candidates
