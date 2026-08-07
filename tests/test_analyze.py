@@ -109,7 +109,7 @@ def test_analyze_parses_model_json():
     assert lesson.category == "import-error"
     assert lesson.lesson.startswith("update every import")
     assert lesson.fingerprint and lesson.normalized
-    assert usage.prompt_tokens == 10
+    assert usage.input_tokens == 10
 
 
 def test_analyze_parses_fenced_json():
@@ -132,7 +132,7 @@ def test_analyze_never_raises():
         completions=SimpleNamespace(create=create)))
     lesson, usage = analyze(broken, "m", "p", "s", "boom")
     assert lesson.fingerprint and lesson.lesson == ""
-    assert usage.prompt_tokens == 0
+    assert usage.input_tokens == 0
 
 
 def test_analyze_noop_client_skips_llm():

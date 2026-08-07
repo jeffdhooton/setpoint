@@ -21,21 +21,6 @@ class Usage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
 
-    @property
-    def prompt_tokens(self) -> int:
-        """Alias for OpenAI-style naming."""
-        return self.input_tokens
-
-    @property
-    def completion_tokens(self) -> int:
-        """Alias for OpenAI-style naming."""
-        return self.output_tokens
-
-    @property
-    def prompt_cache_hit_tokens(self) -> int:
-        """Alias for OpenAI-style naming."""
-        return self.cache_read_tokens
-
     def cost(self, model: str, pricing: dict) -> float:
         p = pricing.get(model)
         if p is None:  # unknown model -> treat as free, never crash a run on pricing
