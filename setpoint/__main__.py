@@ -52,6 +52,10 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
     from setpoint.lessons import LessonStore, promote_validated, repo_key
     lesson_store = LessonStore(repo_key(spec.workspace.repo))
 
+    from setpoint.tuning import Overlay, apply_overlay, slug
+    overlay = Overlay(f"{repo_key(spec.workspace.repo)}--{slug(spec.name)}")
+    apply_overlay(spec, overlay.load())
+
     budget = Budget(spec.budget.max_usd, spec.budget.max_tokens, PRICING,
                      wall_clock_secs=spec.stop.wall_clock_secs)
     if ui is None:
@@ -74,6 +78,9 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
         if spec.memory.scry_export and promoted:
             from setpoint.scry_export import export_lessons
             export_lessons(promoted, spec.workspace.repo)
+
+        from setpoint.retro import run_retro
+        run_retro(state, overlay, memory.root)
 
         # deliver() must run while `cwd` still exists — a worktree cwd is
         # removed by wt.cleanup() below, so this has to happen inside the try.

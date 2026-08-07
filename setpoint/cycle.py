@@ -94,6 +94,9 @@ class Cycle:
         prompt = _PLAN_PROMPT.format(
             goal=self.spec.goal, context=context,
             verdict=verdict, feedback_block=feedback_block)
+        hint = getattr(self.spec.execute, "plan_hint", "")
+        if hint:
+            prompt += f"\nStanding guidance from previous runs: {hint}\n"
         messages = [{"role": "user", "content": prompt}]
         plan, usage = self._plan_call(messages)
         if enforce and not _LESSONS_LINE.search(plan):

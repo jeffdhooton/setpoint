@@ -525,3 +525,23 @@ def test_distinct_failures_reset_no_progress(tmp_path):
                   StubUI(), _plan_client()).run(cwd=tmp_path)
     assert len(state.iters) == 4            # no premature strike-out
     assert all(r.repeat_of == "" for r in state.iters)
+
+
+def test_plan_hint_reaches_plan_prompt(tmp_path):
+    prompts = []
+
+    def create(**kw):
+        prompts.append(kw["messages"][-1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="plan"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    spec = _spec(tmp_path, max_iters=1)
+    spec.execute.plan_hint = "Known pitfall: never edit conftest.py"
+    Cycle(spec, FakeExecutor(), FakeGate(pass_on_iter=99),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client).run(cwd=tmp_path)
+    assert "never edit conftest.py" in prompts[0]
