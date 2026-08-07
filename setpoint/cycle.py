@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from setpoint.analyze import analyze
 from setpoint.budget import Budget, Usage
 from setpoint.memory import IterRecord, Memory, RunState
 from setpoint.retry import with_retries
@@ -70,6 +71,14 @@ class Cycle:
                       getattr(u, "prompt_cache_hit_tokens", 0) or 0)
         return resp.choices[0].message.content or "", usage
 
+    def _lessons(self) -> list[tuple[str, str]]:
+        """(fingerprint, lesson_text) pairs from this run, deduped, oldest first."""
+        out: dict[str, str] = {}
+        for r in self.memory.load().iters:
+            if r.lesson and r.fingerprint not in out:
+                out[r.fingerprint] = r.lesson
+        return list(out.items())
+
     def run(self, cwd: Path) -> RunState:
         self.memory.start()
         tools = build_registry(self.spec.execute.tools)
@@ -118,9 +127,16 @@ class Cycle:
             self.ui.stage("EXECUTE", i, self.spec.stop.max_iters)
             if hasattr(self.executor, "set_deadline"):
                 self.executor.set_deadline(self.budget.remaining_secs())
+            lessons = self._lessons()
+            task = (f"Working directory (all paths are relative to here): {cwd}\n"
+                    f"Plan for this iteration:\n{plan}")
+            if lessons:
+                task += ("\n\nLessons from previous iterations "
+                         "(do not repeat these mistakes):\n"
+                         + "\n".join(f"- {t}" for _, t in lessons))
             result = self.executor.execute(
                 system=_EXEC_SYSTEM.format(goal=self.spec.goal),
-                task=f"Working directory (all paths are relative to here): {cwd}\nPlan for this iteration:\n{plan}",
+                task=task,
                 tools=tools, model=self.spec.execute.model, cwd=cwd,
                 on_event=lambda e: self.ui.tool(e.data.get("name", ""), e.data.get("args", {}))
                 if e.kind == "tool" else None,
@@ -132,12 +148,25 @@ class Cycle:
             gate_result = self.gate.verify(cwd=cwd, on_event=lambda e: None)
             self.ui.verify(gate_result)
 
+            lesson = None
+            analyze_usage = Usage()
+            if not gate_result.passed:
+                self.ui.stage("ANALYZE", i, self.spec.stop.max_iters)
+                lesson, analyze_usage = analyze(
+                    self.plan_client, self.spec.execute.plan_model,
+                    plan, result.text, gate_result.feedback)
+                self.budget.add(self.spec.execute.plan_model, analyze_usage)
+
             iter_usd = (plan_usage.cost(self.spec.execute.plan_model, self.budget.pricing)
+                        + analyze_usage.cost(self.spec.execute.plan_model, self.budget.pricing)
                         + result.usage.cost(self.spec.execute.model, self.budget.pricing))
             rec = IterRecord(n=n, plan=plan, summary=result.text,
                              passed=gate_result.passed, feedback=gate_result.feedback,
                              usd=iter_usd, score=gate_result.score,
-                             stop_reason=getattr(result, "stop_reason", "done"))
+                             stop_reason=getattr(result, "stop_reason", "done"),
+                             lesson=lesson.lesson if lesson else "",
+                             category=lesson.category if lesson else "",
+                             fingerprint=lesson.fingerprint if lesson else "")
             self.memory.append(rec)
 
             # ITERATE

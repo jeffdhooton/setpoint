@@ -217,7 +217,8 @@ def test_preflight_cold_feedback_seeds_first_plan(tmp_path):
                 StubUI(), plan_client)
     state = cyc.run(cwd=tmp_path)
     assert state.status == "passed"
-    assert "ECONNREFUSED" in prompts[0]  # iter-1 plan already sees the cold failure
+    plans = [p for p in prompts if p.startswith("You are the PLAN stage")]
+    assert "ECONNREFUSED" in plans[0]  # iter-1 plan already sees the cold failure
 
 
 def test_cutoff_executor_warns_the_next_plan(tmp_path):
@@ -247,9 +248,10 @@ def test_cutoff_executor_warns_the_next_plan(tmp_path):
                   FakeGate(pass_on_iter=99), mem,
                   Budget(10.0, None, PRICING), StubUI(), plan_client).run(cwd=tmp_path)
 
-    assert "cut off" in prompts[1].lower()      # iter 2's plan sees it
-    assert "max_turns" in prompts[1]
-    assert "cut off" not in prompts[0].lower()  # iter 1 had no prior iteration
+    plans = [p for p in prompts if p.startswith("You are the PLAN stage")]
+    assert "cut off" in plans[1].lower()      # iter 2's plan sees it
+    assert "max_turns" in plans[1]
+    assert "cut off" not in plans[0].lower()  # iter 1 had no prior iteration
     assert state.iters[0].stop_reason == "max_turns"  # and it persists to state.json
 
 
@@ -268,7 +270,8 @@ def test_clean_executor_adds_no_cutoff_note(tmp_path):
     Cycle(_spec(tmp_path, max_iters=2), FakeExecutor(), FakeGate(pass_on_iter=99),
           Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
           StubUI(), plan_client).run(cwd=tmp_path)
-    assert all("cut off" not in p.lower() for p in prompts)
+    plans = [p for p in prompts if p.startswith("You are the PLAN stage")]
+    assert all("cut off" not in p.lower() for p in plans)
 
 
 def test_cycle_retries_transient_plan_errors(tmp_path, monkeypatch):
@@ -315,3 +318,66 @@ def test_cycle_passes_wall_clock_deadline_to_executor(tmp_path):
     cyc.run(cwd=tmp_path)
     assert len(ex.deadlines) == 1
     assert ex.deadlines[0] is not None and 0 < ex.deadlines[0] <= 100
+
+
+def test_failed_iteration_records_fingerprint_and_lesson(tmp_path):
+    import json
+    lesson_json = json.dumps({"category": "test-failure", "symptom": "s",
+                              "root_cause": "r", "lesson": "run the linter first"})
+
+    def create(**kw):
+        content = kw["messages"][0]["content"]
+        text = lesson_json if "ANALYZE stage" in content else "here is the plan"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    state = Cycle(_spec(tmp_path, max_iters=2), FakeExecutor(), FakeGate(pass_on_iter=99),
+                  Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+                  StubUI(), client).run(cwd=tmp_path)
+    assert state.iters[0].fingerprint
+    assert state.iters[0].lesson == "run the linter first"
+    assert state.iters[0].category == "test-failure"
+
+
+def test_passed_iteration_gets_no_lesson(tmp_path):
+    state = Cycle(_spec(tmp_path), FakeExecutor(), FakeGate(pass_on_iter=1),
+                  Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+                  StubUI(), _plan_client()).run(cwd=tmp_path)
+    assert state.iters[0].lesson == ""
+    assert state.iters[0].fingerprint == ""
+
+
+def test_lessons_reach_execute_task_text(tmp_path):
+    import json
+    lesson_json = json.dumps({"category": "c", "symptom": "s", "root_cause": "r",
+                              "lesson": "never touch conftest"})
+
+    def create(**kw):
+        content = kw["messages"][0]["content"]
+        text = lesson_json if "ANALYZE stage" in content else "plan (Lessons: none apply — first try)"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+
+    class TaskCapturingExecutor(FakeExecutor):
+        def __init__(self):
+            super().__init__()
+            self.tasks = []
+        def execute(self, system, task, tools, model, cwd, on_event):
+            self.tasks.append(task)
+            return super().execute(system, task, tools, model, cwd, on_event)
+
+    ex = TaskCapturingExecutor()
+    Cycle(_spec(tmp_path, max_iters=2), ex, FakeGate(pass_on_iter=99),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client).run(cwd=tmp_path)
+    assert "never touch conftest" not in ex.tasks[0]   # iter 1: no lessons yet
+    assert "never touch conftest" in ex.tasks[1]       # iter 2 sees iter 1's lesson
