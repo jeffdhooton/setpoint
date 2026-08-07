@@ -70,6 +70,10 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
         state = cycle.run(cwd=cwd)
         promoted = promote_validated(state, spec.goal, lesson_store)
 
+        if spec.memory.scry_export and promoted:
+            from setpoint.scry_export import export_lessons
+            export_lessons(promoted, spec.workspace.repo)
+
         # deliver() must run while `cwd` still exists — a worktree cwd is
         # removed by wt.cleanup() below, so this has to happen inside the try.
         if getattr(spec, "deliver", None):

@@ -302,3 +302,31 @@ def test_new_extension_is_silent(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == ""
+
+
+def test_spec_parses_memory_block(tmp_path):
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text("""
+name: t
+goal: g
+type: coding
+workspace: {repo: /tmp/x}
+verify: {gate: command, command: "true"}
+memory: {scry_export: true}
+""")
+    from setpoint.spec import load_spec
+    spec = load_spec(str(p))
+    assert spec.memory.scry_export is True
+
+
+def test_spec_memory_defaults_off(tmp_path):
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text("""
+name: t
+goal: g
+type: coding
+workspace: {repo: /tmp/x}
+verify: {gate: command, command: "true"}
+""")
+    from setpoint.spec import load_spec
+    assert load_spec(str(p)).memory.scry_export is False

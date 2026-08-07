@@ -62,6 +62,11 @@ class BudgetCfg:
 
 
 @dataclass
+class MemoryCfg:
+    scry_export: bool = False
+
+
+@dataclass
 class LoopSpec:
     name: str
     goal: str
@@ -73,6 +78,7 @@ class LoopSpec:
     stop: StopCfg
     budget: BudgetCfg
     deliver: dict = field(default_factory=dict)
+    memory: MemoryCfg = field(default_factory=MemoryCfg)
 
 
 def load_spec(path: str) -> LoopSpec:
@@ -183,8 +189,12 @@ def load_spec(path: str) -> LoopSpec:
             str(deliver["branch"]).lower() == str(deliver["base"]).lower():
         raise ValueError("deliver.base must differ from deliver.branch")
 
+    m_raw = raw.get("memory") or {}
+    memory = MemoryCfg(scry_export=bool(m_raw.get("scry_export", False)))
+
     return LoopSpec(
         name=raw["name"], goal=raw["goal"], type=raw["type"],
         workspace=workspace, context=context, execute=execute,
         verify=verify, stop=stop, budget=budget, deliver=deliver,
+        memory=memory,
     )
