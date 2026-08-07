@@ -17,6 +17,11 @@ class IterRecord:
     # "done", or why EXECUTE was cut off ("max_turns", "timeout"). Defaulted so
     # state.json written before this field existed still loads.
     stop_reason: str = "done"
+    # Stage-1 self-improvement fields. Defaulted so pre-existing state.json loads.
+    lesson: str = ""       # imperative rule distilled by ANALYZE ("" = none)
+    category: str = ""     # model-assigned failure class
+    fingerprint: str = ""  # deterministic failure signature (12 hex chars)
+    repeat_of: str = ""    # fingerprint of the prior lesson this failure repeated
 
 
 @dataclass
@@ -77,6 +82,15 @@ class Memory:
             lines.append(f"- iteration {r.n} [{verdict}]: {r.summary}")
             if not r.passed and r.feedback:
                 lines.append(f"  feedback: {r.feedback}")
+        lessons: dict[str, str] = {}
+        for r in state.iters:
+            if r.lesson and r.fingerprint not in lessons:
+                lessons[r.fingerprint] = r.lesson
+        if lessons:
+            lines.append("")
+            lines.append("## Lessons so far")
+            for fp, text in lessons.items():
+                lines.append(f"- [{fp}] {text}")
         return "\n".join(lines)
 
     def _write(self, state: RunState) -> None:
@@ -85,15 +99,24 @@ class Memory:
         tmp.write_text(json.dumps(asdict(state), indent=2))
         tmp.replace(self.state_path)  # atomic
 
+    def note(self, text: str) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self.log_path.open("a") as f:
+            f.write(f"\n> note: {text}\n")
+
     def _append_log(self, rec: IterRecord) -> None:
         verdict = "✅ PASS" if rec.passed else "❌ FAIL"
         if rec.stop_reason != "done":
             verdict += f" ⚠️ EXECUTE cut off: {rec.stop_reason}"
+        if rec.repeat_of:
+            verdict += f" ⚠️ repeat of lesson {rec.repeat_of}"
         block = (
             f"\n## Iteration {rec.n} — {verdict} (${rec.usd:.4f})\n\n"
             f"**Plan:** {rec.plan}\n\n"
             f"**Did:** {rec.summary}\n\n"
             f"**Verify:** {rec.feedback}\n"
         )
+        if rec.lesson:
+            block += f"\n**Lesson:** {rec.lesson}\n"
         with self.log_path.open("a") as f:
             f.write(block)
