@@ -451,3 +451,42 @@ def test_noop_plan_client_skips_cite_or_die(tmp_path):
                   Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
                   StubUI(), AgentPlanClient()).run(cwd=tmp_path)
     assert len(state.iters) == 2           # loop ran normally, no re-prompt wedging
+
+
+class VaryingPathGate:
+    """Same underlying failure, cosmetically different feedback each call —
+    old exact-text no-progress tracking never fires on this."""
+    def __init__(self):
+        self.calls = 0
+    def verify(self, cwd, on_event):
+        self.calls += 1
+        return GateResult(passed=False,
+                          feedback=f"FAILED /build{self.calls}/tests/test_x.py:{self.calls}0: "
+                                   f"AssertionError: expected 200 got 500")
+
+
+def test_repeat_fingerprint_counts_toward_no_progress(tmp_path):
+    spec = _spec(tmp_path, max_iters=99, no_progress=3)
+    state = Cycle(spec, FakeExecutor(), VaryingPathGate(),
+                  Memory("t", root=tmp_path / "r"), Budget(100.0, None, PRICING),
+                  StubUI(), _plan_client()).run(cwd=tmp_path)
+    assert state.status == "stopped"
+    assert len(state.iters) == 3            # struck out on repeats, not max_iters
+    assert state.iters[1].repeat_of == state.iters[0].fingerprint
+    assert state.iters[2].repeat_of == state.iters[0].fingerprint
+
+
+def test_distinct_failures_reset_no_progress(tmp_path):
+    class RotatingGate:
+        def __init__(self):
+            self.calls = 0
+        def verify(self, cwd, on_event):
+            self.calls += 1
+            return GateResult(passed=False, feedback=f"totally different error kind {chr(64 + self.calls)}"
+                              * (self.calls + 1))
+    spec = _spec(tmp_path, max_iters=4, no_progress=3)
+    state = Cycle(spec, FakeExecutor(), RotatingGate(),
+                  Memory("t", root=tmp_path / "r"), Budget(100.0, None, PRICING),
+                  StubUI(), _plan_client()).run(cwd=tmp_path)
+    assert len(state.iters) == 4            # no premature strike-out
+    assert all(r.repeat_of == "" for r in state.iters)

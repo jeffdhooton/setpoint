@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from setpoint.analyze import analyze
+from setpoint.analyze import analyze, is_repeat
 from setpoint.budget import Budget, Usage
 from setpoint.memory import IterRecord, Memory, RunState
 from setpoint.retry import with_retries
@@ -117,6 +117,7 @@ class Cycle:
         tools = build_registry(self.spec.execute.tools)
         last: IterRecord | None = None
         no_progress = 0
+        priors: list[tuple[str, str, str]] = []
         prior = len(self.memory.load().iters)  # resume-aware: continue the spine's numbering
 
         # PREFLIGHT: run a cheap gate once cold, before any work. A gate whose
@@ -182,6 +183,7 @@ class Cycle:
             self.ui.verify(gate_result)
 
             lesson = None
+            repeat_of = ""
             analyze_usage = Usage()
             if not gate_result.passed:
                 self.ui.stage("ANALYZE", i, self.spec.stop.max_iters)
@@ -189,6 +191,8 @@ class Cycle:
                     self.plan_client, self.spec.execute.plan_model,
                     plan, result.text, gate_result.feedback)
                 self.budget.add(self.spec.execute.plan_model, analyze_usage)
+                repeat_of = is_repeat(gate_result.feedback, lesson.category, priors) or ""
+                priors.append((lesson.fingerprint, lesson.normalized, lesson.category))
 
             iter_usd = (plan_usage.cost(self.spec.execute.plan_model, self.budget.pricing)
                         + analyze_usage.cost(self.spec.execute.plan_model, self.budget.pricing)
@@ -199,7 +203,8 @@ class Cycle:
                              stop_reason=getattr(result, "stop_reason", "done"),
                              lesson=lesson.lesson if lesson else "",
                              category=lesson.category if lesson else "",
-                             fingerprint=lesson.fingerprint if lesson else "")
+                             fingerprint=lesson.fingerprint if lesson else "",
+                             repeat_of=repeat_of)
             self.memory.append(rec)
 
             # ITERATE
@@ -208,8 +213,8 @@ class Cycle:
                 last = rec
                 break
 
-            # no-progress tracking: feedback unchanged from prior failing iter
-            if last is not None and last.feedback == rec.feedback:
+            # no-progress tracking: identical feedback OR a repeat of a known lesson
+            if (last is not None and last.feedback == rec.feedback) or rec.repeat_of:
                 no_progress += 1
             else:
                 no_progress = 0
