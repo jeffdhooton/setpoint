@@ -71,3 +71,15 @@ def test_env_root_override(tmp_path, monkeypatch):
     monkeypatch.setenv("SETPOINT_LESSONS_ROOT", str(tmp_path / "custom"))
     store = LessonStore("k")
     assert store.path == tmp_path / "custom" / "k.jsonl"
+
+
+def test_promote_text_only_updates_if_fresher(tmp_path):
+    """Regression: older lesson text should not clobber fresher phrasing."""
+    store = LessonStore("k", root=tmp_path)
+    store.promote([_lesson("aaa", ts="2026-08-07T00:00:00", text="new text")])
+    store.promote([_lesson("aaa", ts="2026-01-01T00:00:00", text="stale text")])
+    loaded = store.load()
+    assert len(loaded) == 1
+    assert loaded[0].lesson == "new text"
+    assert loaded[0].hits == 2
+    assert loaded[0].ts == "2026-08-07T00:00:00"

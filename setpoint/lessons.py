@@ -65,9 +65,9 @@ class LessonStore:
             if sl.fingerprint in by_fp:
                 existing = by_fp[sl.fingerprint]
                 existing.hits += 1
-                existing.ts = max(existing.ts, sl.ts)
-                if sl.lesson:
+                if sl.lesson and sl.ts >= existing.ts:
                     existing.lesson = sl.lesson  # keep the freshest phrasing
+                existing.ts = max(existing.ts, sl.ts)
             else:
                 by_fp[sl.fingerprint] = sl
         kept = sorted(by_fp.values(), key=lambda sl: (sl.hits, sl.ts), reverse=True)[:CAP]
