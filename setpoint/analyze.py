@@ -68,7 +68,7 @@ Respond with ONLY a JSON object:
 {{"category": "<short kebab-case failure class, e.g. import-error>",
   "symptom": "<what the gate observed, one line>",
   "root_cause": "<why it actually happened, one line>",
-  "lesson": "<one imperative rule the next plan must respect>"}}"""
+  "lesson": "<one imperative rule the next plan must respect — name the exact files, paths, or identifiers involved; a lesson without specifics cannot be acted on>"}}"""
 
 _JSON_BLOB = re.compile(r"\{.*\}", re.S)
 
