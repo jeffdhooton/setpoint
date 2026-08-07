@@ -168,3 +168,16 @@ def test_migrate_blocked_when_setpoint_dir_already_exists(tmp_path, capsys):
     assert (repo / ".loom" / "one.loom.yaml").exists()
     assert (repo / ".loom" / "fleet.yaml").read_text() == "name: f\nmembers:\n  - one.loom.yaml\n"
     assert list((repo / ".setpoint").iterdir()) == []
+
+
+def test_build_executor_passes_max_turns(monkeypatch, tmp_path):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    from setpoint.__main__ import _build_executor
+    from setpoint.spec import (BudgetCfg, Context, ExecuteCfg, LoopSpec,
+                               StopCfg, VerifyCfg, Workspace)
+    spec = LoopSpec(name="t", goal="g", type="coding",
+                    workspace=Workspace(repo=tmp_path), context=Context(),
+                    execute=ExecuteCfg(max_turns=33), verify=VerifyCfg(command="true"),
+                    stop=StopCfg(), budget=BudgetCfg())
+    ex = _build_executor(spec)
+    assert ex.max_turns == 33

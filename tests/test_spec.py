@@ -330,3 +330,37 @@ verify: {gate: command, command: "true"}
 """)
     from setpoint.spec import load_spec
     assert load_spec(str(p)).memory.scry_export is False
+
+
+def test_spec_parses_max_turns_and_tracks_explicit(tmp_path):
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text("""
+name: t
+goal: g
+type: coding
+workspace: {repo: /tmp/x}
+execute: {max_turns: 40}
+verify: {gate: command, command: "true"}
+stop: {no_progress_after: 3}
+""")
+    from setpoint.spec import load_spec
+    spec = load_spec(str(p))
+    assert spec.execute.max_turns == 40
+    assert "execute.max_turns" in spec.explicit
+    assert "stop.no_progress_after" in spec.explicit
+
+
+def test_spec_max_turns_default_not_explicit(tmp_path):
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text("""
+name: t
+goal: g
+type: coding
+workspace: {repo: /tmp/x}
+verify: {gate: command, command: "true"}
+""")
+    from setpoint.spec import load_spec
+    spec = load_spec(str(p))
+    assert spec.execute.max_turns == 25
+    assert spec.explicit == []
+    assert spec.execute.plan_hint == ""

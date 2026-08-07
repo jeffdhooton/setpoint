@@ -22,7 +22,8 @@ def _build_executor(spec):
     from setpoint.clients import make_deepseek_client
     from setpoint.executor import DeepSeekExecutor
     from setpoint.budget import PRICING
-    return DeepSeekExecutor(client=make_deepseek_client(), pricing=PRICING)
+    return DeepSeekExecutor(client=make_deepseek_client(), pricing=PRICING,
+                            max_turns=spec.execute.max_turns)
 
 
 def _build_plan_client(spec):

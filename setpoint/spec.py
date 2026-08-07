@@ -32,6 +32,8 @@ class ExecuteCfg:
     model: str = "deepseek-v4-flash"
     engine: str = "deepseek"
     tools: list[str] = field(default_factory=lambda: ["read", "write", "edit", "bash"])
+    max_turns: int = 25
+    plan_hint: str = ""  # overlay-injected; never read from YAML
 
 
 @dataclass
@@ -79,6 +81,7 @@ class LoopSpec:
     budget: BudgetCfg
     deliver: dict = field(default_factory=dict)
     memory: MemoryCfg = field(default_factory=MemoryCfg)
+    explicit: list[str] = field(default_factory=list)
 
 
 def load_spec(path: str) -> LoopSpec:
@@ -129,6 +132,7 @@ def load_spec(path: str) -> LoopSpec:
         model=ex_raw.get("model", default_model),
         engine=engine,
         tools=list(ex_raw.get("tools") or ["read", "write", "edit", "bash"]),
+        max_turns=int(ex_raw.get("max_turns", 25)),
     )
 
     v_raw = raw.get("verify") or {}
@@ -192,9 +196,15 @@ def load_spec(path: str) -> LoopSpec:
     m_raw = raw.get("memory") or {}
     memory = MemoryCfg(scry_export=bool(m_raw.get("scry_export", False)))
 
+    explicit = []
+    if "max_turns" in ex_raw:
+        explicit.append("execute.max_turns")
+    if s_raw.get("no_progress_after") is not None:
+        explicit.append("stop.no_progress_after")
+
     return LoopSpec(
         name=raw["name"], goal=raw["goal"], type=raw["type"],
         workspace=workspace, context=context, execute=execute,
         verify=verify, stop=stop, budget=budget, deliver=deliver,
-        memory=memory,
+        memory=memory, explicit=explicit,
     )
