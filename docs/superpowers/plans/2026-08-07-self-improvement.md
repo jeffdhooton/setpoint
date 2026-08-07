@@ -785,9 +785,9 @@ Replace `_plan` with a lessons-aware version:
             messages += [{"role": "assistant", "content": plan},
                          {"role": "user", "content": _CITE_REPROMPT}]
             plan, usage2 = self._plan_call(messages)
-            usage = Usage(usage.prompt_tokens + usage2.prompt_tokens,
-                          usage.completion_tokens + usage2.completion_tokens,
-                          usage.prompt_cache_hit_tokens + usage2.prompt_cache_hit_tokens)
+            usage = Usage(usage.input_tokens + usage2.input_tokens,
+                          usage.output_tokens + usage2.output_tokens,
+                          usage.cache_read_tokens + usage2.cache_read_tokens)
             if not _LESSONS_LINE.search(plan):
                 self.memory.note("PLAN omitted required Lessons line after re-prompt")
         return plan, usage
