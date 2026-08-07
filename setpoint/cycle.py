@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from setpoint.analyze import analyze
@@ -31,6 +32,20 @@ _EXEC_SYSTEM = """You are the EXECUTE stage of a closed loop working toward this
 Use the provided tools to do the work in the workspace. When the planned step is
 complete, stop and briefly state what you did. Do not ask questions."""
 
+_LESSONS_RULE = """
+Lessons learned so far (respect these):
+{lessons}
+
+Your plan MUST include a line starting with "Lessons:" naming which lesson
+IDs apply to this step and how the plan avoids repeating them, or exactly:
+Lessons: none apply — <reason>
+"""
+
+_CITE_REPROMPT = ('Your plan is missing the required "Lessons:" line. '
+                  'Reply with the same plan plus that line.')
+
+_LESSONS_LINE = re.compile(r"^\s*lessons\s*:", re.IGNORECASE | re.MULTILINE)
+
 
 class Cycle:
     def __init__(self, spec, executor, gate, memory: Memory, budget: Budget, ui,
@@ -53,17 +68,35 @@ class Cycle:
         parts.append(self.memory.context_block())
         return "\n\n".join(parts)
 
-    def _plan(self, context: str, last: IterRecord | None) -> tuple[str, Usage]:
+    def _plan(self, context: str, last: IterRecord | None,
+              lessons: list[tuple[str, str]]) -> tuple[str, Usage]:
         verdict = "failed" if last and not last.passed else "has not run yet"
         feedback_block = f"Failure feedback:\n{last.feedback}\n" if last and not last.passed else ""
         if last is not None and last.stop_reason != "done":
             feedback_block += _CUTOFF_NOTE.format(reason=last.stop_reason)
+        enforce = bool(lessons) and not getattr(self.plan_client, "is_noop", False)
+        if enforce:
+            listing = "\n".join(f"- {fp}: {text}" for fp, text in lessons)
+            feedback_block += _LESSONS_RULE.format(lessons=listing)
         prompt = _PLAN_PROMPT.format(
             goal=self.spec.goal, context=context,
             verdict=verdict, feedback_block=feedback_block)
+        messages = [{"role": "user", "content": prompt}]
+        plan, usage = self._plan_call(messages)
+        if enforce and not _LESSONS_LINE.search(plan):
+            messages += [{"role": "assistant", "content": plan},
+                         {"role": "user", "content": _CITE_REPROMPT}]
+            plan, usage2 = self._plan_call(messages)
+            usage = Usage(usage.input_tokens + usage2.input_tokens,
+                          usage.output_tokens + usage2.output_tokens,
+                          usage.cache_read_tokens + usage2.cache_read_tokens)
+            if not _LESSONS_LINE.search(plan):
+                self.memory.note("PLAN omitted required Lessons line after re-prompt")
+        return plan, usage
+
+    def _plan_call(self, messages) -> tuple[str, Usage]:
         resp = with_retries(lambda: self.plan_client.chat.completions.create(
-            model=self.spec.execute.plan_model,
-            messages=[{"role": "user", "content": prompt}],
+            model=self.spec.execute.plan_model, messages=messages,
         ))
         u = resp.usage
         usage = Usage(getattr(u, "prompt_tokens", 0) or 0,
@@ -120,14 +153,14 @@ class Cycle:
 
             # PLAN
             self.ui.stage("PLAN", i, self.spec.stop.max_iters)
-            plan, plan_usage = self._plan(context, last)
+            lessons = self._lessons()
+            plan, plan_usage = self._plan(context, last, lessons)
             self.budget.add(self.spec.execute.plan_model, plan_usage)
 
             # EXECUTE
             self.ui.stage("EXECUTE", i, self.spec.stop.max_iters)
             if hasattr(self.executor, "set_deadline"):
                 self.executor.set_deadline(self.budget.remaining_secs())
-            lessons = self._lessons()
             task = (f"Working directory (all paths are relative to here): {cwd}\n"
                     f"Plan for this iteration:\n{plan}")
             if lessons:

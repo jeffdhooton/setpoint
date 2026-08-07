@@ -381,3 +381,73 @@ def test_lessons_reach_execute_task_text(tmp_path):
           StubUI(), client).run(cwd=tmp_path)
     assert "never touch conftest" not in ex.tasks[0]   # iter 1: no lessons yet
     assert "never touch conftest" in ex.tasks[1]       # iter 2 sees iter 1's lesson
+
+
+def _lesson_client(plan_texts):
+    """Returns lesson JSON for ANALYZE calls; pops plan_texts for PLAN calls.
+    Records the full messages list of every call in .calls — a call's FIRST
+    message identifies it (a cite-or-die re-prompt's last message is the
+    corrective instruction, but its first is still the PLAN prompt)."""
+    import json
+    lesson_json = json.dumps({"category": "c", "symptom": "s", "root_cause": "r",
+                              "lesson": "always run pytest before finishing"})
+    calls = []
+
+    def create(**kw):
+        calls.append(kw["messages"])
+        if "ANALYZE stage" in kw["messages"][0]["content"]:
+            text = lesson_json
+        else:
+            text = plan_texts.pop(0) if plan_texts else "bare plan"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    client.calls = calls
+    return client
+
+
+def _plan_calls(client):
+    return [m for m in client.calls if "PLAN stage" in m[0]["content"]]
+
+
+def test_plan_reprompted_once_when_lessons_line_missing(tmp_path):
+    # iter 1: no lessons -> 1 plan call. iter 2: lessons exist, plan lacks the
+    # line -> re-prompt once, second attempt also bare -> proceed + note.
+    client = _lesson_client(["plan one", "bare plan", "still bare"])
+    mem = Memory("t", root=tmp_path / "r")
+    Cycle(_spec(tmp_path, max_iters=2), FakeExecutor(), FakeGate(pass_on_iter=99),
+          mem, Budget(10.0, None, PRICING), StubUI(), client).run(cwd=tmp_path)
+    plans = _plan_calls(client)
+    assert len(plans) == 3                          # 1 (iter1) + 2 (iter2: original + re-prompt)
+    assert "Lessons:" in plans[1][0]["content"]     # iter-2 prompt states the requirement
+    assert "missing" in plans[2][-1]["content"]     # re-prompt call carries the corrective msg
+    assert "omitted" in mem.log_path.read_text().lower()
+
+
+def test_plan_with_lessons_line_not_reprompted(tmp_path):
+    client = _lesson_client(["plan one",
+                             "fix import\nLessons: L1 applies — will update all import sites"])
+    Cycle(_spec(tmp_path, max_iters=2), FakeExecutor(), FakeGate(pass_on_iter=99),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client).run(cwd=tmp_path)
+    assert len(_plan_calls(client)) == 2            # no re-prompt on iter 2
+
+
+def test_first_iteration_prompt_has_no_lessons_requirement(tmp_path):
+    client = _lesson_client(["plan one"])
+    Cycle(_spec(tmp_path, max_iters=1), FakeExecutor(), FakeGate(pass_on_iter=99),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client).run(cwd=tmp_path)
+    assert "Lessons:" not in _plan_calls(client)[0][0]["content"]
+
+
+def test_noop_plan_client_skips_cite_or_die(tmp_path):
+    from setpoint.executor.agent_plan import AgentPlanClient
+    state = Cycle(_spec(tmp_path, max_iters=2), FakeExecutor(), FakeGate(pass_on_iter=99),
+                  Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+                  StubUI(), AgentPlanClient()).run(cwd=tmp_path)
+    assert len(state.iters) == 2           # loop ran normally, no re-prompt wedging
