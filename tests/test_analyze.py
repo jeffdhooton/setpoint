@@ -45,27 +45,38 @@ def test_is_repeat_none_when_unrelated():
 
 
 def test_normalize_preserves_numbers_in_identifiers():
-    """Numbers embedded in identifiers are preserved to distinguish different code.
+    r"""Numbers embedded in identifiers are preserved as complete runs.
 
-    Identifiers like 'sha256', 'test2', 'port8080' are NOT normalized because they
-    represent different code versions, algorithms, or configurations and should
-    produce different fingerprints. Only 'bare' numbers (variable counters, line
-    numbers, timestamps) are stripped.
+    The _NUM regex uses negative lookbehind on \w (word characters: [a-zA-Z0-9_])
+    to ensure that NO digit in an identifier-suffix is stripped. This prevents
+    partial matches within multi-digit runs (e.g., 'port80' must be preserved
+    entirely, not partially collapsed to 'port8#').
 
-    Trade-off: the regex avoids collapsing variables (retry counts, timestamps)
-    which improves repeat detection, while accepting that different algorithm
-    names (sha256 vs sha512) remain distinct.
+    Guarantee: Any digit preceded by a word character (letter, digit, or underscore)
+    is NOT stripped. This preserves:
+    - Algorithm names (sha256, sha512, md5)
+    - Version identifiers (test2, test3, v1, v2)
+    - Port numbers (port8080, port9090, port80, port81)
+    - Error codes (error404, error409)
+
+    Only 'bare' numbers (not preceded by word chars) are stripped:
+    - Line numbers (":42:" → ":#:")
+    - Bare counters ("attempt 1" → "attempt #")
+    - Durations ("0.34s" → "#s") [timestamp pre-pass handles T##:##:##]
     """
-    # Different algorithms are preserved as different failures
-    assert normalize_feedback("ImportError: cannot import 'sha256'") != \
-           normalize_feedback("ImportError: cannot import 'sha512'")
+    # Different algorithms must produce different fingerprints
+    assert fingerprint("ImportError: cannot import 'sha256'") != \
+           fingerprint("ImportError: cannot import 'sha512'")
 
-    # Different test versions are preserved as different failures
-    assert normalize_feedback("test2 failed") != normalize_feedback("test3 failed")
+    # Different test/version identifiers must produce different fingerprints
+    assert fingerprint("test2 failed") != fingerprint("test3 failed")
 
-    # Different ports are preserved as different failures
-    assert normalize_feedback("port8080") != normalize_feedback("port9090")
+    # Critical: multi-digit identifier suffixes must not partially collapse
+    # (these would previously fail with (?<![a-zA-Z_]) lookbehind)
+    assert fingerprint("port80") != fingerprint("port81")  # 2nd digit differs
+    assert fingerprint("error404") != fingerprint("error409")  # 2nd+ digit differs
+    assert fingerprint("test10") != fingerprint("test19")  # 2nd digit differs
 
-    # But bare numbers are still stripped
+    # But bare numbers (not in identifiers) are still stripped
     assert normalize_feedback("attempt 1") == normalize_feedback("attempt 2")
     assert normalize_feedback("line 42") == normalize_feedback("line 97")

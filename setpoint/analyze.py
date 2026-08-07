@@ -11,10 +11,11 @@ _PATH = re.compile(r"(?:/[\w.\-]+){2,}")
 # indicative of different failures — normalize to canonical form.
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 # Bare numbers (line/col numbers, counts, durations, ports, retries).
-# Strip only if NOT preceded by letters/underscores, to preserve numbers in
-# identifiers (sha256, test2, port8080) which represent different code.
+# Strip only if NOT preceded by word characters (\w = [a-zA-Z0-9_]), to preserve
+# entire digit runs in identifiers (sha256, test2, port8080). Negative lookbehind
+# on \w prevents regex engine from restarting inside multi-digit identifier suffixes.
 # Lookahead is not used to allow stripping numbers with unit suffixes (0.34s).
-_NUM = re.compile(r"(?<![a-zA-Z_])\d+(?:\.\d+)?")
+_NUM = re.compile(r"(?<!\w)\d+(?:\.\d+)?")
 _WS = re.compile(r"\s+")
 
 NEAR_MATCH_RATIO = 0.9
