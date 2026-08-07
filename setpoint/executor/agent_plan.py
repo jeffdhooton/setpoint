@@ -44,5 +44,7 @@ class AgentPlanClient:
     EXECUTE, so the PLAN stage is a zero-cost pass-through that keeps cycle.py
     unchanged."""
 
+    is_noop = True  # cycle/analyze skip LLM prompting through this shim
+
     def __init__(self):
         self.chat = _Chat()

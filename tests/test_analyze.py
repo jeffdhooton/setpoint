@@ -80,3 +80,64 @@ def test_normalize_preserves_numbers_in_identifiers():
     # But bare numbers (not in identifiers) are still stripped
     assert normalize_feedback("attempt 1") == normalize_feedback("attempt 2")
     assert normalize_feedback("line 42") == normalize_feedback("line 97")
+
+
+import json
+from types import SimpleNamespace
+
+from setpoint.analyze import Lesson, analyze
+from setpoint.budget import Usage
+
+
+def _client(text):
+    def create(**kw):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5,
+                                  prompt_cache_hit_tokens=0))
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+GOOD = json.dumps({"category": "import-error", "symptom": "module not found",
+                   "root_cause": "renamed module not updated in caller",
+                   "lesson": "update every import site when renaming a module"})
+
+
+def test_analyze_parses_model_json():
+    lesson, usage = analyze(_client(GOOD), "m", "plan", "did stuff",
+                            "ImportError: no module named foo")
+    assert lesson.category == "import-error"
+    assert lesson.lesson.startswith("update every import")
+    assert lesson.fingerprint and lesson.normalized
+    assert usage.prompt_tokens == 10
+
+
+def test_analyze_parses_fenced_json():
+    lesson, _ = analyze(_client(f"```json\n{GOOD}\n```"), "m", "p", "s", "boom")
+    assert lesson.category == "import-error"
+
+
+def test_analyze_falls_back_on_bad_json():
+    lesson, _ = analyze(_client("not json at all"), "m", "p", "s",
+                        "AssertionError: nope\nsecond line")
+    assert lesson.lesson == ""
+    assert lesson.symptom == "AssertionError: nope"   # first feedback line
+    assert lesson.fingerprint                          # fingerprint still computed
+
+
+def test_analyze_never_raises():
+    def create(**kw):
+        raise RuntimeError("api down")
+    broken = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    lesson, usage = analyze(broken, "m", "p", "s", "boom")
+    assert lesson.fingerprint and lesson.lesson == ""
+    assert usage.prompt_tokens == 0
+
+
+def test_analyze_noop_client_skips_llm():
+    from setpoint.executor.agent_plan import AgentPlanClient
+    client = AgentPlanClient()
+    assert getattr(client, "is_noop", False) is True
+    lesson, _ = analyze(client, "m", "p", "s", "gate said no")
+    assert lesson.fingerprint and lesson.lesson == ""

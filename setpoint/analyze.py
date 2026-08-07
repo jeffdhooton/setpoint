@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+from dataclasses import dataclass
 from difflib import SequenceMatcher
+
+from setpoint.budget import Usage
+from setpoint.retry import with_retries
 
 # Absolute POSIX paths -> basename, so the same failure reported from two
 # checkouts (or a worktree) fingerprints identically.
@@ -46,3 +51,74 @@ def is_repeat(feedback: str, category: str,
                 and SequenceMatcher(None, norm, pnorm).ratio() >= NEAR_MATCH_RATIO):
             return pfp
     return None
+
+
+_ANALYZE_PROMPT = """You are the ANALYZE stage of a closed loop. An iteration just failed its verify gate.
+
+Plan for the iteration:
+{plan}
+
+What the executor did:
+{summary}
+
+Gate feedback:
+{feedback}
+
+Respond with ONLY a JSON object:
+{{"category": "<short kebab-case failure class, e.g. import-error>",
+  "symptom": "<what the gate observed, one line>",
+  "root_cause": "<why it actually happened, one line>",
+  "lesson": "<one imperative rule the next plan must respect>"}}"""
+
+_JSON_BLOB = re.compile(r"\{.*\}", re.S)
+
+
+@dataclass
+class Lesson:
+    fingerprint: str
+    normalized: str
+    category: str = ""
+    symptom: str = ""
+    root_cause: str = ""
+    lesson: str = ""
+
+
+def _fallback(feedback: str) -> Lesson:
+    first = feedback.strip().splitlines()[0][:200] if feedback.strip() else ""
+    return Lesson(fingerprint=fingerprint(feedback),
+                  normalized=normalize_feedback(feedback), symptom=first)
+
+
+def analyze(client, model: str, plan: str, summary: str,
+            feedback: str) -> tuple[Lesson, Usage]:
+    """Distill a failed iteration into a lesson. Never raises — any failure
+    returns a fingerprint-only fallback so the loop is never blocked."""
+    if getattr(client, "is_noop", False):
+        return _fallback(feedback), Usage()
+    prompt = _ANALYZE_PROMPT.format(plan=plan[:2000], summary=summary[:2000],
+                                    feedback=feedback[:4000])
+    try:
+        resp = with_retries(lambda: client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}],
+        ), attempts=2)
+    except Exception:
+        return _fallback(feedback), Usage()
+    u = resp.usage
+    usage = Usage(getattr(u, "prompt_tokens", 0) or 0,
+                  getattr(u, "completion_tokens", 0) or 0,
+                  getattr(u, "prompt_cache_hit_tokens", 0) or 0)
+    m = _JSON_BLOB.search(resp.choices[0].message.content or "")
+    if not m:
+        return _fallback(feedback), usage
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return _fallback(feedback), usage
+    return Lesson(
+        fingerprint=fingerprint(feedback),
+        normalized=normalize_feedback(feedback),
+        category=str(data.get("category", ""))[:60],
+        symptom=str(data.get("symptom", ""))[:200],
+        root_cause=str(data.get("root_cause", ""))[:300],
+        lesson=str(data.get("lesson", ""))[:300],
+    ), usage
