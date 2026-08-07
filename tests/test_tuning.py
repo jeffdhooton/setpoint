@@ -79,3 +79,19 @@ def test_corrupt_overlay_ignored(tmp_path):
 
 def test_slug():
     assert slug("My Spec.setpoint.yaml") == "my-spec-setpoint-yaml"
+
+
+def test_overlay_file_with_json_array_ignored(tmp_path):
+    ov = Overlay("k", root=tmp_path)
+    ov.path.parent.mkdir(parents=True, exist_ok=True)
+    ov.path.write_text("[1, 2, 3]")
+    assert ov.load() == {}
+    assert ov.reconcile({"passed": True, "iters": 1, "usd": 0}) == "empty"
+
+
+def test_overlay_file_with_json_number_ignored(tmp_path):
+    ov = Overlay("k", root=tmp_path)
+    ov.path.parent.mkdir(parents=True, exist_ok=True)
+    ov.path.write_text("42")
+    assert ov.load() == {}
+    assert ov.reconcile({"passed": True, "iters": 1, "usd": 0}) == "empty"

@@ -50,7 +50,7 @@ class Overlay:
             return {"versions": []}
         try:
             data = json.loads(self.path.read_text())
-            if not isinstance(data.get("versions"), list):
+            if not isinstance(data, dict) or not isinstance(data.get("versions"), list):
                 return {"versions": []}
             return data
         except json.JSONDecodeError:
