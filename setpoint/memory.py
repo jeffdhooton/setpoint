@@ -22,6 +22,8 @@ class IterRecord:
     category: str = ""     # model-assigned failure class
     fingerprint: str = ""  # deterministic failure signature (12 hex chars)
     repeat_of: str = ""    # fingerprint of the prior lesson this failure repeated
+    symptom: str = ""     # what the gate observed (from ANALYZE)
+    root_cause: str = ""  # why it happened (from ANALYZE)
 
 
 @dataclass

@@ -10,6 +10,17 @@ from pathlib import Path
 CAP = 100
 
 
+def render_lesson(lesson: str, symptom: str = "", root_cause: str = "") -> str:
+    """One display form for every injection point. Evidence makes a lesson
+    hard to reframe away; a bare rule is easy to dismiss."""
+    bits = []
+    if symptom:
+        bits.append(f"bit this repo before: {symptom}")
+    if root_cause:
+        bits.append(f"because: {root_cause}")
+    return f"{lesson} ({' — '.join(bits)})" if bits else lesson
+
+
 @dataclass
 class StoredLesson:
     ts: str
@@ -21,6 +32,8 @@ class StoredLesson:
     lesson: str
     hits: int = 1
     validated: bool = True
+    symptom: str = ""
+    root_cause: str = ""
 
 
 def repo_key(repo: Path) -> str:
@@ -67,6 +80,8 @@ class LessonStore:
                 existing.hits += 1
                 if sl.lesson and sl.ts >= existing.ts:
                     existing.lesson = sl.lesson  # keep the freshest phrasing
+                    existing.symptom = sl.symptom
+                    existing.root_cause = sl.root_cause
                 existing.ts = max(existing.ts, sl.ts)
             else:
                 by_fp[sl.fingerprint] = sl
@@ -99,7 +114,8 @@ def promote_validated(state, goal: str, store: LessonStore,
                 ts=ts, run=state.name, goal=goal,
                 fingerprint=r.fingerprint,
                 normalized="",  # filled below from analyze to avoid storing raw feedback twice
-                category=r.category, lesson=r.lesson))
+                category=r.category, lesson=r.lesson,
+                symptom=r.symptom, root_cause=r.root_cause))
     if not candidates:
         return []
     # normalized text is recomputable from feedback; store it for near-matching

@@ -545,3 +545,25 @@ def test_plan_hint_reaches_plan_prompt(tmp_path):
           Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
           StubUI(), client).run(cwd=tmp_path)
     assert "never edit conftest.py" in prompts[0]
+
+
+def test_failed_iteration_records_evidence_fields(tmp_path):
+    import json
+    lesson_json = json.dumps({"category": "c", "symptom": "the symptom",
+                              "root_cause": "the cause", "lesson": "the rule"})
+
+    def create(**kw):
+        text = lesson_json if "ANALYZE stage" in kw["messages"][0]["content"] \
+            else "plan\nLessons: none apply — first attempt"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    state = Cycle(_spec(tmp_path, max_iters=1), FakeExecutor(), FakeGate(pass_on_iter=99),
+                  Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+                  StubUI(), client).run(cwd=tmp_path)
+    assert state.iters[0].symptom == "the symptom"
+    assert state.iters[0].root_cause == "the cause"

@@ -128,3 +128,51 @@ def test_promote_validated_skips_empty_lessons(tmp_path):
     ])
     store = LessonStore("k", root=tmp_path)
     assert promote_validated(state, "g", store) == []
+
+
+def test_render_lesson_full_and_partial():
+    from setpoint.lessons import render_lesson
+    assert render_lesson("update the config", "entrypoint missing", "rename skipped it") == \
+        "update the config (bit this repo before: entrypoint missing — because: rename skipped it)"
+    assert render_lesson("update the config", "entrypoint missing", "") == \
+        "update the config (bit this repo before: entrypoint missing)"
+    assert render_lesson("update the config", "", "rename skipped it") == \
+        "update the config (because: rename skipped it)"
+    assert render_lesson("update the config") == "update the config"
+
+
+def test_stored_lesson_old_jsonl_line_loads_with_empty_evidence(tmp_path):
+    store = LessonStore("k", root=tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(
+        '{"ts": "2026-08-07T00:00:00", "run": "r", "goal": "g", "fingerprint": "abc",'
+        ' "normalized": "n", "category": "c", "lesson": "old-format lesson"}\n')
+    loaded = store.load()
+    assert loaded[0].symptom == "" and loaded[0].root_cause == ""
+
+
+def test_promote_validated_carries_evidence(tmp_path):
+    from setpoint.lessons import promote_validated
+    from setpoint.memory import IterRecord, RunState
+    state = RunState(name="t", status="passed", iters=[
+        IterRecord(n=1, plan="", summary="", passed=False, feedback="f", usd=0,
+                   lesson="fix config", fingerprint="fpA",
+                   symptom="entrypoint missing", root_cause="rename skipped it"),
+        IterRecord(n=2, plan="", summary="", passed=True, feedback="ok", usd=0),
+    ])
+    store = LessonStore("k", root=tmp_path)
+    promoted = promote_validated(state, "g", store)
+    assert promoted[0].symptom == "entrypoint missing"
+    assert promoted[0].root_cause == "rename skipped it"
+    assert store.load()[0].symptom == "entrypoint missing"
+
+
+def test_promote_merge_refreshes_evidence_with_text(tmp_path):
+    store = LessonStore("k", root=tmp_path)
+    store.promote([_lesson("aaa", ts="2026-08-01T00:00:00")])
+    fresher = _lesson("aaa", ts="2026-08-07T00:00:00", text="newer text")
+    fresher.symptom, fresher.root_cause = "new symptom", "new cause"
+    store.promote([fresher])
+    got = store.load()[0]
+    assert got.lesson == "newer text" and got.symptom == "new symptom" \
+        and got.root_cause == "new cause"

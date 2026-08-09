@@ -225,6 +225,8 @@ class Cycle:
                              lesson=lesson.lesson if lesson else "",
                              category=lesson.category if lesson else "",
                              fingerprint=lesson.fingerprint if lesson else "",
+                             symptom=lesson.symptom if lesson else "",
+                             root_cause=lesson.root_cause if lesson else "",
                              repeat_of=repeat_of)
             self.memory.append(rec)
 

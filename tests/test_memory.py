@@ -85,3 +85,17 @@ def test_memory_note_appends_to_log(tmp_path):
     mem.start()
     mem.note("PLAN omitted required Lessons line after re-prompt")
     assert "PLAN omitted" in mem.log_path.read_text()
+
+
+def test_iterrecord_evidence_fields_default_and_backcompat(tmp_path):
+    import json
+    from setpoint.memory import Memory
+    root = tmp_path / "runs"
+    (root / "t").mkdir(parents=True)
+    (root / "t" / "state.json").write_text(json.dumps({
+        "name": "t", "status": "stopped", "spent_usd": 0.0,
+        "iters": [{"n": 1, "plan": "p", "summary": "s", "passed": False,
+                   "feedback": "f", "usd": 0.0}],
+    }))
+    r = Memory("t", root=root).load().iters[0]
+    assert r.symptom == "" and r.root_cause == ""
