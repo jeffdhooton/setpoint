@@ -176,3 +176,43 @@ def test_promote_merge_refreshes_evidence_with_text(tmp_path):
     got = store.load()[0]
     assert got.lesson == "newer text" and got.symptom == "new symptom" \
         and got.root_cause == "new cause"
+
+
+def _repo_with(tmp_path, *files):
+    for f in files:
+        p = tmp_path / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+    return tmp_path
+
+
+def test_anchored_files_extracts_existing_paths(tmp_path):
+    from setpoint.lessons import anchored_files
+    repo = _repo_with(tmp_path, "calc/config.json", "calc/core.py")
+    text = "When renaming, update the entrypoint field in calc/config.json too."
+    assert anchored_files(text, repo) == ["calc/config.json"]
+
+
+def test_anchored_files_handles_backticks_and_trailing_punctuation(tmp_path):
+    from setpoint.lessons import anchored_files
+    repo = _repo_with(tmp_path, "calc/config.json")
+    assert anchored_files("update `calc/config.json`.", repo) == ["calc/config.json"]
+
+
+def test_anchored_files_ignores_nonexistent_versions_and_modules(tmp_path):
+    from setpoint.lessons import anchored_files
+    repo = _repo_with(tmp_path, "calc/config.json")
+    text = "on python 3.11 the calc.core module needs docs/missing.md updated"
+    assert anchored_files(text, repo) == []
+
+
+def test_anchored_files_caps_and_dedupes(tmp_path):
+    from setpoint.lessons import anchored_files
+    repo = _repo_with(tmp_path, "a.txt", "b.txt", "c.txt", "d.txt")
+    text = "fix a.txt a.txt b.txt c.txt d.txt"
+    assert anchored_files(text, repo) == ["a.txt", "b.txt", "c.txt"]
+
+
+def test_anchored_files_never_raises(tmp_path):
+    from setpoint.lessons import anchored_files
+    assert anchored_files("x" * 10000, tmp_path / "no-such-dir") == []

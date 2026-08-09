@@ -21,6 +21,33 @@ def render_lesson(lesson: str, symptom: str = "", root_cause: str = "") -> str:
     return f"{lesson} ({' — '.join(bits)})" if bits else lesson
 
 
+_PATHISH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+_VERSIONISH = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def anchored_files(text: str, repo: Path, cap: int = 3) -> list[str]:
+    """File paths a lesson names that actually exist in the repo. Anchors make
+    lesson engagement deterministically checkable. Never raises."""
+    out: list[str] = []
+    try:
+        for tok in _PATHISH.findall(text):
+            tok = tok.rstrip(".,;:").lstrip("./")
+            if not tok or tok in out or _VERSIONISH.match(tok):
+                continue
+            if "/" not in tok and "." not in tok:
+                continue  # bare words can't be file paths
+            try:
+                if (Path(repo) / tok).is_file():
+                    out.append(tok)
+            except OSError:
+                continue
+            if len(out) >= cap:
+                break
+    except Exception:
+        pass
+    return out
+
+
 @dataclass
 class StoredLesson:
     ts: str
