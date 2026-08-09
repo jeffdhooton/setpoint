@@ -629,3 +629,50 @@ def test_execute_task_lists_anchor_checklist(tmp_path):
           Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
           StubUI(), client, lesson_store=store).run(cwd=tmp_path)
     assert "Verify before finishing: calc/config.json" in ex.tasks[0]
+
+
+def test_plan_problems_pure():
+    from setpoint.cycle import _plan_problems
+    lessons = [("abc123", "update calc/config.json", ["calc/config.json"])]
+    ok = "plan\nLessons: abc123 — updating calc/config.json"
+    assert _plan_problems(ok, lessons) == ""
+    basename_ok = "plan touches config.json as needed\nLessons: abc123 applies"
+    assert _plan_problems(basename_ok, lessons) == ""
+    dodged = "plan\nLessons: none apply — we are only fixing an import"
+    msg = _plan_problems(dodged, lessons)
+    assert "calc/config.json" in msg and "abc123" in msg
+    no_line = "plan without the marker, mentions calc/config.json"
+    assert "Lessons:" in _plan_problems(no_line, lessons)
+    assert _plan_problems("anything\nLessons: none apply — x",
+                          [("abc123", "generic rule", [])]) == ""
+
+
+def test_anchor_dodge_gets_one_reprompt_then_proceeds(tmp_path):
+    (tmp_path / "calc").mkdir()
+    (tmp_path / "calc" / "config.json").write_text("{}")
+    store = _store_with_lesson(tmp_path, "update the entrypoint in calc/config.json")
+    mem = Memory("t", root=tmp_path / "r")
+    client = _lesson_client([
+        "plan\nLessons: none apply — just fixing an import",   # iter 1 attempt 1: dodge
+        "plan\nLessons: none apply — still just an import",    # iter 1 attempt 2: dodge again
+    ])
+    Cycle(_spec(tmp_path, max_iters=1), FakeExecutor(), FakeGate(pass_on_iter=99),
+          mem, Budget(10.0, None, PRICING), StubUI(), client,
+          lesson_store=store).run(cwd=tmp_path)
+    plans = _plan_calls(client)
+    assert len(plans) == 2                                  # exactly one re-prompt
+    assert "calc/config.json" in plans[1][-1]["content"]    # corrective names the file
+    assert "engagement" in mem.log_path.read_text()         # second miss noted
+
+
+def test_anchor_mention_avoids_reprompt(tmp_path):
+    (tmp_path / "calc").mkdir()
+    (tmp_path / "calc" / "config.json").write_text("{}")
+    store = _store_with_lesson(tmp_path, "update the entrypoint in calc/config.json")
+    client = _lesson_client([
+        "fix cli and update calc/config.json entrypoint\nLessons: applies",
+    ])
+    Cycle(_spec(tmp_path, max_iters=1), FakeExecutor(), FakeGate(pass_on_iter=1),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client, lesson_store=store).run(cwd=tmp_path)
+    assert len(_plan_calls(client)) == 1

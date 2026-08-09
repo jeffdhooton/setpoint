@@ -43,10 +43,25 @@ lesson ID, how the plan addresses it — or the specific evidence that it does
 not apply here.
 """
 
-_CITE_REPROMPT = ('Your plan is missing the required "Lessons:" line. '
-                  'Reply with the same plan plus that line.')
-
 _LESSONS_LINE = re.compile(r"^\s*lessons\s*:", re.IGNORECASE | re.MULTILINE)
+
+
+def _plan_problems(plan: str, lessons: list[tuple[str, str, list[str]]]) -> str:
+    """Deterministic lesson-engagement check. Returns a corrective message,
+    or "" when the plan satisfies both conditions."""
+    issues = []
+    if not _LESSONS_LINE.search(plan):
+        issues.append('your plan is missing the required "Lessons:" line')
+    low = plan.lower()
+    for fp, _, anchors in lessons:
+        if anchors and not any(a.lower() in low or Path(a).name.lower() in low
+                               for a in anchors):
+            issues.append(
+                f"lesson [{fp}] names {', '.join(anchors)}, which exist in this repo — "
+                f"state how your plan addresses them, or justify per file why they are exempt")
+    if not issues:
+        return ""
+    return "Revise your plan: " + "; ".join(issues) + ". Reply with the full revised plan."
 
 
 class Cycle:
@@ -102,15 +117,17 @@ class Cycle:
             prompt += f"\nStanding guidance from previous runs: {hint}\n"
         messages = [{"role": "user", "content": prompt}]
         plan, usage = self._plan_call(messages)
-        if enforce and not _LESSONS_LINE.search(plan):
-            messages += [{"role": "assistant", "content": plan},
-                         {"role": "user", "content": _CITE_REPROMPT}]
-            plan, usage2 = self._plan_call(messages)
-            usage = Usage(usage.input_tokens + usage2.input_tokens,
-                          usage.output_tokens + usage2.output_tokens,
-                          usage.cache_read_tokens + usage2.cache_read_tokens)
-            if not _LESSONS_LINE.search(plan):
-                self.memory.note("PLAN omitted required Lessons line after re-prompt")
+        if enforce:
+            problems = _plan_problems(plan, lessons)
+            if problems:
+                messages += [{"role": "assistant", "content": plan},
+                             {"role": "user", "content": problems}]
+                plan, usage2 = self._plan_call(messages)
+                usage = Usage(usage.input_tokens + usage2.input_tokens,
+                              usage.output_tokens + usage2.output_tokens,
+                              usage.cache_read_tokens + usage2.cache_read_tokens)
+                if _plan_problems(plan, lessons):
+                    self.memory.note("PLAN omitted required lesson engagement after re-prompt")
         return plan, usage
 
     def _plan_call(self, messages) -> tuple[str, Usage]:
