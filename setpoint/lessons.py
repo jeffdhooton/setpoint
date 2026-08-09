@@ -37,7 +37,8 @@ def anchored_files(text: str, repo: Path, cap: int = 3) -> list[str]:
             if "/" not in tok and "." not in tok:
                 continue  # bare words can't be file paths
             try:
-                if (Path(repo) / tok).is_file():
+                p = (Path(repo) / tok).resolve()
+                if p.is_file() and p.is_relative_to(Path(repo).resolve()):
                     out.append(tok)
             except OSError:
                 continue

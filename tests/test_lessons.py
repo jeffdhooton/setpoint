@@ -216,3 +216,21 @@ def test_anchored_files_caps_and_dedupes(tmp_path):
 def test_anchored_files_never_raises(tmp_path):
     from setpoint.lessons import anchored_files
     assert anchored_files("x" * 10000, tmp_path / "no-such-dir") == []
+
+
+def test_anchored_files_blocks_path_traversal(tmp_path):
+    from setpoint.lessons import anchored_files
+    # Create repo with sub/ subdirectory
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sub").mkdir()
+    # Create a file outside the repo
+    secret = tmp_path / "secret.txt"
+    secret.write_text("x")
+    # Create a valid file inside repo
+    (repo / "ok.txt").write_text("x")
+    # Try to escape with path traversal - should not be anchored
+    text = "see sub/../../secret.txt and ok.txt"
+    result = anchored_files(text, repo)
+    assert result == ["ok.txt"]
+    assert "sub/../../secret.txt" not in result
