@@ -5,6 +5,7 @@ from pathlib import Path
 
 from setpoint.analyze import analyze, is_repeat
 from setpoint.budget import Budget, Usage
+from setpoint.lessons import anchored_files, render_lesson
 from setpoint.memory import IterRecord, Memory, RunState
 from setpoint.retry import with_retries
 from setpoint.tools import build_registry
@@ -33,12 +34,13 @@ Use the provided tools to do the work in the workspace. When the planned step is
 complete, stop and briefly state what you did. Do not ask questions."""
 
 _LESSONS_RULE = """
-Lessons learned so far (respect these):
+Lessons from previous runs of this goal in this repo. Assume each applies
+unless you can name specific evidence that it does not:
 {lessons}
 
-Your plan MUST include a line starting with "Lessons:" naming which lesson
-IDs apply to this step and how the plan avoids repeating them, or exactly:
-Lessons: none apply — <reason>
+Your plan MUST include a line starting with "Lessons:" stating, for each
+lesson ID, how the plan addresses it — or the specific evidence that it does
+not apply here.
 """
 
 _CITE_REPROMPT = ('Your plan is missing the required "Lessons:" line. '
@@ -77,19 +79,20 @@ class Cycle:
         parts.append(self.memory.context_block())
         stored = self._stored_lessons()
         if stored:
-            parts.append("## Lessons from previous runs\n"
-                         + "\n".join(f"- [{sl.fingerprint}] {sl.lesson}" for sl in stored))
+            parts.append("## Lessons from previous runs\n" + "\n".join(
+                f"- [{sl.fingerprint}] {render_lesson(sl.lesson, sl.symptom, sl.root_cause)}"
+                for sl in stored))
         return "\n\n".join(parts)
 
     def _plan(self, context: str, last: IterRecord | None,
-              lessons: list[tuple[str, str]]) -> tuple[str, Usage]:
+              lessons: list[tuple[str, str, list[str]]]) -> tuple[str, Usage]:
         verdict = "failed" if last and not last.passed else "has not run yet"
         feedback_block = f"Failure feedback:\n{last.feedback}\n" if last and not last.passed else ""
         if last is not None and last.stop_reason != "done":
             feedback_block += _CUTOFF_NOTE.format(reason=last.stop_reason)
         enforce = bool(lessons) and not getattr(self.plan_client, "is_noop", False)
         if enforce:
-            listing = "\n".join(f"- {fp}: {text}" for fp, text in lessons)
+            listing = "\n".join(f"- {fp}: {text}" for fp, text, _ in lessons)
             feedback_block += _LESSONS_RULE.format(lessons=listing)
         prompt = _PLAN_PROMPT.format(
             goal=self.spec.goal, context=context,
@@ -120,17 +123,20 @@ class Cycle:
                       getattr(u, "prompt_cache_hit_tokens", 0) or 0)
         return resp.choices[0].message.content or "", usage
 
-    def _lessons(self) -> list[tuple[str, str]]:
-        """(fingerprint, lesson_text) pairs: stored lessons first, then this run's,
-        deduped by fingerprint."""
-        out: dict[str, str] = {}
+    def _lessons(self) -> list[tuple[str, str, list[str]]]:
+        """(fingerprint, display, anchors) triples: stored lessons first, then
+        this run's, deduped by fingerprint."""
+        out: dict[str, tuple[str, list[str]]] = {}
+        repo = self.spec.workspace.repo
         for sl in self._stored_lessons():
-            if sl.lesson:
-                out.setdefault(sl.fingerprint, sl.lesson)
+            if sl.lesson and sl.fingerprint not in out:
+                out[sl.fingerprint] = (render_lesson(sl.lesson, sl.symptom, sl.root_cause),
+                                       anchored_files(sl.lesson, repo))
         for r in self.memory.load().iters:
             if r.lesson and r.fingerprint not in out:
-                out[r.fingerprint] = r.lesson
-        return list(out.items())
+                out[r.fingerprint] = (render_lesson(r.lesson, r.symptom, r.root_cause),
+                                      anchored_files(r.lesson, repo))
+        return [(fp, d, a) for fp, (d, a) in out.items()]
 
     def run(self, cwd: Path) -> RunState:
         self.memory.start()
@@ -188,7 +194,10 @@ class Cycle:
             if lessons:
                 task += ("\n\nLessons from previous iterations "
                          "(do not repeat these mistakes):\n"
-                         + "\n".join(f"- {t}" for _, t in lessons))
+                         + "\n".join(f"- {d}" for _, d, _ in lessons))
+                anchors = sorted({a for _, _, aa in lessons for a in aa})
+                if anchors:
+                    task += "\nVerify before finishing: " + ", ".join(anchors)
             result = self.executor.execute(
                 system=_EXEC_SYSTEM.format(goal=self.spec.goal),
                 task=task,

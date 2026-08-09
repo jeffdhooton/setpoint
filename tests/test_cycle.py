@@ -567,3 +567,65 @@ def test_failed_iteration_records_evidence_fields(tmp_path):
                   StubUI(), client).run(cwd=tmp_path)
     assert state.iters[0].symptom == "the symptom"
     assert state.iters[0].root_cause == "the cause"
+
+
+def _store_with_lesson(tmp_path, lesson, symptom="", root_cause="", fb="AssertionError: boom"):
+    from setpoint.analyze import fingerprint, normalize_feedback
+    from setpoint.lessons import LessonStore, StoredLesson
+    store = LessonStore("k", root=tmp_path / "lessons")
+    store.promote([StoredLesson(ts="2026-08-01T00:00:00", run="old", goal="g",
+                                fingerprint=fingerprint(fb),
+                                normalized=normalize_feedback(fb), category="assertion",
+                                lesson=lesson, symptom=symptom, root_cause=root_cause)])
+    return store
+
+
+def test_injected_lessons_carry_evidence(tmp_path):
+    store = _store_with_lesson(tmp_path, "update the entrypoint",
+                               symptom="entrypoint missing", root_cause="rename skipped it")
+    prompts = []
+
+    def create(**kw):
+        prompts.append(kw["messages"][-1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="p\nLessons: applies"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    Cycle(_spec(tmp_path, max_iters=1), FakeExecutor(), FakeGate(pass_on_iter=1),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client, lesson_store=store).run(cwd=tmp_path)
+    assert "bit this repo before: entrypoint missing" in prompts[0]
+    assert "because: rename skipped it" in prompts[0]
+    assert "assume each applies" in prompts[0].lower()
+
+
+def test_execute_task_lists_anchor_checklist(tmp_path):
+    (tmp_path / "calc").mkdir()
+    (tmp_path / "calc" / "config.json").write_text("{}")
+    store = _store_with_lesson(tmp_path, "update the entrypoint in calc/config.json")
+
+    class TaskCapture(FakeExecutor):
+        def __init__(self):
+            super().__init__()
+            self.tasks = []
+        def execute(self, system, task, tools, model, cwd, on_event):
+            self.tasks.append(task)
+            return super().execute(system, task, tools, model, cwd, on_event)
+
+    def create(**kw):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="p\nLessons: applies — will update calc/config.json"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0))
+
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create)))
+    ex = TaskCapture()
+    Cycle(_spec(tmp_path, max_iters=1), ex, FakeGate(pass_on_iter=1),
+          Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
+          StubUI(), client, lesson_store=store).run(cwd=tmp_path)
+    assert "Verify before finishing: calc/config.json" in ex.tasks[0]
