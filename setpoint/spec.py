@@ -8,7 +8,7 @@ import yaml
 
 VALID_TYPES = {"coding", "content"}
 VALID_GATES = {"command", "judge"}
-VALID_ENGINES = {"deepseek", "claude", "codex"}
+VALID_ENGINES = {"deepseek", "claude", "codex", "kimi"}
 VALID_JUDGE_ENGINES = {"claude", "codex"}
 
 

@@ -19,6 +19,9 @@ def _build_executor(spec):
     if engine == "codex":
         from setpoint.executor import CodexExecutor
         return CodexExecutor()
+    if engine == "kimi":
+        from setpoint.executor.agent_cli import KimiExecutor
+        return KimiExecutor()
     from setpoint.clients import make_deepseek_client
     from setpoint.executor import DeepSeekExecutor
     from setpoint.budget import PRICING

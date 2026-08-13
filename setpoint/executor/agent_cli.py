@@ -127,3 +127,22 @@ class ClaudeExecutor(AgentCLIExecutor):
 class CodexExecutor(AgentCLIExecutor):
     def __init__(self, timeout: int = 1800, runner=subprocess.run):
         super().__init__(_codex_argv, _codex_parse, timeout=timeout, runner=runner)
+
+
+def _kimi_argv(prompt: str, cwd: Path, model: str) -> list[str]:
+    # --auto: fully autonomous prompt mode (kimi's analog of acceptEdits).
+    # Text output: kimi's stream-json event shape is undocumented, and the
+    # gate — not the transcript — decides success, so raw text is enough.
+    argv = ["kimi", "-p", prompt, "--output-format", "text", "--auto"]
+    if model and model != "kimi":
+        argv += ["-m", model]
+    return argv
+
+
+def _kimi_parse(stdout: str) -> tuple[str, Usage]:
+    return stdout.strip(), Usage()
+
+
+class KimiExecutor(AgentCLIExecutor):
+    def __init__(self, timeout: int = 1800, runner=subprocess.run):
+        super().__init__(_kimi_argv, _kimi_parse, timeout=timeout, runner=runner)
