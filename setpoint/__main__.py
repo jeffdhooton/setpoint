@@ -180,7 +180,7 @@ def cmd_fleet(rest: list[str]) -> int:
     from setpoint import fleet
     if not rest:
         print("fleet: usage: setpoint fleet {run <fleet.yaml> [--fresh] | status <fleet.yaml> | "
-              "stop | plan <idea.md> --repo <path> --engines a,b,c [--out DIR]}",
+              "stop | plan <idea.md> --repo <path> --engines a,b,c [--out DIR] [--checks CMD]}",
               file=sys.stderr)
         return 1
     sub, args = rest[0], rest[1:]
@@ -199,7 +199,7 @@ def cmd_fleet(rest: list[str]) -> int:
         from setpoint.spec import VALID_ENGINES
         idea = args[0]
         opts = args[1:]
-        known_flags = ("--repo", "--engines", "--out")
+        known_flags = ("--repo", "--engines", "--out", "--checks")
         values: dict[str, str] = {}
         i = 0
         while i < len(opts):
@@ -226,7 +226,17 @@ def cmd_fleet(rest: list[str]) -> int:
                   f"must be one of {sorted(VALID_ENGINES)}", file=sys.stderr)
             return 2
         out = values.get("--out") or f"fleets/{Path(idea).stem}"
-        fleet_path = decompose(idea, repo, engines, out)
+        from setpoint.decompose import detect_repo_checks
+        checks = values.get("--checks")
+        if checks is None:
+            checks = detect_repo_checks(Path(repo).expanduser())
+            if checks:
+                print(f"fleet plan: using detected repo checks as the broad gate: {checks}")
+            else:
+                print("fleet plan: no repo check command detected — member gates will "
+                      "be the task commands only. Pass --checks '<cmd>' to add the "
+                      "repo's required check.", file=sys.stderr)
+        fleet_path = decompose(idea, repo, engines, out, repo_checks=checks or None)
         print(f"fleet bundle written to {fleet_path.parent}")
         print(f"review plan.md, then: setpoint fleet run {fleet_path}")
         return 0

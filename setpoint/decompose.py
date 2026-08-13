@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -58,6 +59,34 @@ def _default_oneshot(engine: str, prompt: str, cwd: str | None = None) -> str:
     return text
 
 
+# Priority order for "the check this repo actually gates PRs on". `bar` is
+# the program-health convention; ci/check/verify cover the common rest. A
+# member gate that skips these lets a PR pass green while the repo's own
+# required check is red.
+_CHECK_SCRIPTS = ("bar", "ci", "check", "verify")
+
+
+def detect_repo_checks(repo: Path) -> str | None:
+    """The repo's own check command, or None when it cannot be determined.
+    Only Node package.json scripts are auto-detected; anything else should be
+    passed explicitly with `fleet plan --checks`."""
+    pkg = Path(repo) / "package.json"
+    if not pkg.exists():
+        return None
+    try:
+        scripts = (json.loads(pkg.read_text()) or {}).get("scripts") or {}
+    except json.JSONDecodeError:
+        return None
+    name = next((s for s in _CHECK_SCRIPTS if s in scripts), None)
+    if name is None:
+        return None
+    if (Path(repo) / "pnpm-lock.yaml").exists():
+        return f"pnpm {name}"
+    if (Path(repo) / "yarn.lock").exists():
+        return f"yarn {name}"
+    return f"npm run {name}"
+
+
 def _extract_json(text: str) -> dict:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
@@ -93,7 +122,15 @@ def _validate(tasks: list[dict], engines: list[str]) -> None:
                 raise ValueError(f"task {t['name']!r} depends on unknown {dep!r}")
 
 
-def _member_spec(t: dict, repo: str) -> dict:
+def _member_spec(t: dict, repo: str, repo_checks: str | None = None) -> dict:
+    # With repo checks known, the task's own command becomes the scoped gate
+    # (what this worker is responsible for) and the repo's check becomes the
+    # broad gate (what the repo requires). Cycle then distinguishes "passed"
+    # from "completed-capped" instead of failing verified work.
+    verify = {"gate": "command", "command": t["verify_command"]}
+    if repo_checks:
+        verify = {"gate": "command", "command": repo_checks,
+                  "scoped_command": t["verify_command"]}
     return {
         "name": t["name"],
         "type": "coding",
@@ -101,7 +138,7 @@ def _member_spec(t: dict, repo: str) -> dict:
         "workspace": {"repo": repo, "worktree": True,
                       "branch": f"setpoint/{t['name']}"},
         "execute": {"engine": t["engine"]},
-        "verify": {"gate": "command", "command": t["verify_command"]},
+        "verify": verify,
         "stop": {"max_iters": 6},
         # Must be truthy: run_loop only calls deliver() when
         # `getattr(spec, "deliver", None)` is truthy (spec.py / __main__.py
@@ -129,7 +166,7 @@ def _plan_md(idea_name: str, tasks: list[dict]) -> str:
 
 
 def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
-              oneshot=None) -> Path:
+              oneshot=None, repo_checks: str | None = None) -> Path:
     oneshot = oneshot or _default_oneshot
     # Absolutize here, at the single entry point, so every downstream
     # consumer (member specs' workspace.repo, fleet.yaml's room.repo) gets an
@@ -145,6 +182,14 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
     tasks = _extract_json(raw)["tasks"]
     _validate(tasks, engines)
 
+    # A single-engine fleet cannot cross-review: maker == checker for every
+    # task. Say so at plan time, when it is still cheap to add an engine.
+    if len({t["engine"] for t in tasks}) < 2:
+        print("setpoint fleet plan: WARNING — this fleet uses a single engine, so "
+              "no member can be cross-reviewed (maker == checker). Members will be "
+              "reported 'unreviewed'. Re-run with --engines a,b to enable review.",
+              file=sys.stderr)
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "plan.md").write_text(_plan_md(name, tasks))
@@ -153,7 +198,7 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
     members = []
     for t in tasks:
         member = f"{t['name']}.setpoint.yaml"
-        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo),
+        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo, repo_checks),
                                                  sort_keys=False))
         members.append(f"./{member}")
 

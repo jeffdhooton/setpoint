@@ -127,3 +127,53 @@ def test_cli_plan_rejects_unknown_engine(tmp_path, monkeypatch):
 
     assert cli.main(["fleet", "plan", "idea.md", "--repo", str(tmp_path / "repo"),
                      "--engines", "claude,gemini"]) == 2
+
+
+def test_detect_repo_checks_prefers_bar_then_ci(tmp_path):
+    from setpoint.decompose import detect_repo_checks
+    (tmp_path / "pnpm-lock.yaml").write_text("")
+    (tmp_path / "package.json").write_text(json.dumps(
+        {"scripts": {"test": "vitest", "ci": "turbo ci", "bar": "turbo bar"}}))
+    assert detect_repo_checks(tmp_path) == "pnpm bar"
+
+    (tmp_path / "package.json").write_text(json.dumps(
+        {"scripts": {"test": "vitest", "ci": "turbo ci"}}))
+    assert detect_repo_checks(tmp_path) == "pnpm ci"
+
+
+def test_detect_repo_checks_uses_the_lockfile_package_manager(tmp_path):
+    from setpoint.decompose import detect_repo_checks
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"ci": "x"}}))
+    assert detect_repo_checks(tmp_path) == "npm run ci"
+
+
+def test_detect_repo_checks_returns_none_without_package_json(tmp_path):
+    from setpoint.decompose import detect_repo_checks
+    assert detect_repo_checks(tmp_path) is None
+
+
+def test_decompose_wires_repo_checks_as_the_broad_gate(tmp_path):
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot,
+                           repo_checks="pnpm bar")
+    member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
+    assert member["verify"]["command"] == "pnpm bar"
+    assert member["verify"]["scoped_command"] == "pytest tests/api -q"
+
+
+def test_decompose_without_repo_checks_keeps_the_task_command(tmp_path):
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot)
+    member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
+    assert member["verify"]["command"] == "pytest tests/api -q"
+    assert "scoped_command" not in member["verify"]
