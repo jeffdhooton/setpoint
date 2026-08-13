@@ -75,17 +75,15 @@ def _run_member(member_path: Path, fresh: bool, run_loop, *,
         return _member_name(member_path), "error"
 
     if room_ctx is not None:
-        # context.notes is typed as str in spec.py, but a fleet worker needs
-        # its own room-context block kept distinct from any author-supplied
-        # notes -- normalize to a list (preserving any existing note as its
-        # first element) rather than string-concatenating blindly.
+        # context.notes is a plain str (spec.py:26), and Cycle._discover
+        # joins it as a scalar ("\n\n".join([spec.context.notes])) --
+        # cycle.py:89. A list here would blow up every real member's first
+        # DISCOVER with a TypeError. Concatenate, don't wrap.
         block = ROOM_CONTEXT_TEMPLATE.format(room_id=room_ctx["room_id"],
                                              task_id=room_ctx["task_id"],
                                              agent=room_ctx["agent"])
-        existing = spec.context.notes
-        notes = list(existing) if isinstance(existing, list) else ([existing] if existing else [])
-        notes.append(block)
-        spec.context.notes = notes
+        spec.context.notes = (
+            (spec.context.notes + "\n\n" if spec.context.notes else "") + block)
 
     try:
         state = run_loop(spec, fresh=fresh, ui=NullUI(),
@@ -134,23 +132,65 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
     oneshot(reviewer_engine, prompt)
 
 
-def _setup_room(fs, room) -> tuple[str, dict[str, dict]]:
-    """Create the room and post every `room.tasks` entry in declared order,
-    resolving `depends_on` member-names to the room task ids of already-posted
-    entries. Returns the room id and a per-member context dict (room_id,
+def _order_tasks_by_dependency(tasks: list[dict]) -> list[int]:
+    """Return task indices in an order where every entry's depends_on
+    members have already appeared -- i.e. a topological order, not
+    necessarily file order (a dependent entry may be declared before the
+    member it depends on). Raises ValueError on an unknown depends_on target
+    or a dependency cycle."""
+    member_names = {entry["member"] for entry in tasks}
+    for i, entry in enumerate(tasks):
+        for dep in entry.get("depends_on") or []:
+            if dep not in member_names:
+                raise ValueError(
+                    f"room.tasks[{i}] ({entry['member']!r}) depends_on unknown "
+                    f"member {dep!r}")
+
+    posted_idx: set[int] = set()
+    posted_members: set[str] = set()
+    order: list[int] = []
+    while len(posted_idx) < len(tasks):
+        progressed = False
+        for i, entry in enumerate(tasks):
+            if i in posted_idx:
+                continue
+            deps = entry.get("depends_on") or []
+            if all(d in posted_members for d in deps):
+                order.append(i)
+                posted_idx.add(i)
+                posted_members.add(entry["member"])
+                progressed = True
+        if not progressed:
+            missing = [tasks[i]["member"] for i in range(len(tasks)) if i not in posted_idx]
+            raise ValueError(f"dependency cycle in room.tasks: {missing}")
+    return order
+
+
+def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
+    """Post every `room.tasks` entry, resolving `depends_on` member-names to
+    the room task ids of already-posted entries (posting in
+    dependency-satisfying order, so a dependent entry may be declared before
+    the member it depends on). Returns a per-member context dict (room_id,
     task_id, engine, agent, branch, repo, fleet_engines) used later to inject
-    the ROOM CONTEXT block and to pick a cross-review engine."""
+    the ROOM CONTEXT block and to pick a cross-review engine.
+
+    Raises ValueError for a malformed entry (missing member/title), an
+    unknown depends_on target, or a dependency cycle."""
     from setpoint.spec import load_spec
 
     name_to_path = {_run_name(m): m for m in fs.members}
-    room_info = room.create_room(run_id=fs.name, repo=fs.room["repo"])
-    room_id = room_info["id"]
+    tasks = fs.room.get("tasks") or []
+    for i, entry in enumerate(tasks):
+        if not entry.get("member") or not entry.get("title"):
+            raise ValueError(f"room.tasks[{i}] missing required 'member' or 'title'")
+
+    order = _order_tasks_by_dependency(tasks)
 
     name_to_task_id: dict[str, str] = {}
     member_room_ctx: dict[str, dict] = {}
     fleet_engines: list[str] = []
-    tasks = fs.room.get("tasks") or []
-    for entry in tasks:
+    for i in order:
+        entry = tasks[i]
         member = entry["member"]
         member_path = name_to_path.get(member)
         try:
@@ -160,8 +200,7 @@ def _setup_room(fs, room) -> tuple[str, dict[str, dict]]:
         if engine and engine not in fleet_engines:
             fleet_engines.append(engine)
 
-        deps = [name_to_task_id[d] for d in (entry.get("depends_on") or [])
-               if d in name_to_task_id]
+        deps = [name_to_task_id[d] for d in (entry.get("depends_on") or [])]
         task = room.post_task(room_id, entry["title"], body=entry.get("body", ""),
                               depends_on=deps, interfaces=entry.get("interfaces", ""))
         task_id = task["id"]
@@ -181,7 +220,7 @@ def _setup_room(fs, room) -> tuple[str, dict[str, dict]]:
     for ctx in member_room_ctx.values():
         ctx["fleet_engines"] = fleet_engines
 
-    return room_id, member_room_ctx
+    return member_room_ctx
 
 
 def _write_room_report(fs, room, room_id: str) -> str:
@@ -199,11 +238,7 @@ def _write_room_report(fs, room, room_id: str) -> str:
                          f"(task {m.get('task_id')}): {m.get('body')}")
         cursor = resp.get("cursor", cursor)
     text = "\n".join(lines) + "\n"
-    # Unlike status.md (which lives beside "runs" under runs_root.parent),
-    # the room report is keyed off runs_root itself -- see
-    # tests/test_fleet_room.py, which sets SETPOINT_RUNS_ROOT to <tmp>/runs
-    # and expects the report at <tmp>/runs/fleets/<name>/report.md.
-    out_dir = runs_root / "fleets" / fs.name
+    out_dir = _fleet_out_dir(fs, runs_root)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "report.md").write_text(text)
     return text
@@ -274,12 +309,16 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
     skipped = 0
 
     try:
-        # Room setup (create_room + post_task per room.tasks entry) runs
-        # inside the try too: if it fails partway -- e.g. create_room
-        # succeeds but a later post_task raises -- the finally below must
-        # still see a room to tear down instead of leaking the subprocess.
+        # Room setup runs inside the try too: create_room is called first so
+        # room_id is assigned as early as possible, then _post_tasks does the
+        # rest. If _post_tasks fails partway (bad room.tasks entry, a
+        # dependency cycle, or a post_task RPC error), the finally below
+        # still sees a non-None room_id and tears the room down instead of
+        # leaking the subprocess.
         if room is not None:
-            room_id, member_room_ctx = _setup_room(fs, room)
+            room_info = room.create_room(run_id=fs.name, repo=fs.room["repo"])
+            room_id = room_info["id"]
+            member_room_ctx = _post_tasks(fs, room, room_id)
 
         # ThreadPoolExecutor.submit() enqueues work immediately regardless of
         # worker availability -- it does not block until a slot is actually
@@ -333,6 +372,13 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
             room.close()
 
 
+def _fleet_out_dir(fs, runs_root: Path) -> Path:
+    """Where fleet-level artifacts (status.md, report.md) live: beside
+    "runs", not inside it -- runs_root is ~/.setpoint/runs by default, so
+    this resolves to ~/.setpoint/fleets/<name>."""
+    return runs_root.parent / "fleets" / fs.name
+
+
 def _status_lines(fs, runs_root: Path) -> list[str]:
     lines = [f"# fleet {fs.name}", "", f"{'member':30} {'status':16} {'iters':>6} {'spend':>8}"]
     for member in fs.members:
@@ -351,7 +397,7 @@ def fleet_status(fleet_path: str) -> str:
     fs = load_fleet(fleet_path)
     runs_root = _runs_root()
     text = "\n".join(_status_lines(fs, runs_root)) + "\n"
-    out_dir = runs_root.parent / "fleets" / fs.name
+    out_dir = _fleet_out_dir(fs, runs_root)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "status.md").write_text(text)
     return text
