@@ -360,6 +360,16 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
             room_info = room.create_room(run_id=fs.name, repo=fs.room["repo"])
             room_id = room_info["id"]
             member_room_ctx = _post_tasks(fs, room, room_id)
+            # Self-describing fleet: write the room manifest next to
+            # status.md/report.md so external tools (viewers, wave restarts)
+            # can find the room without a room.get lookup.
+            out_dir = _fleet_out_dir(fs, _runs_root())
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "room.json").write_text(json.dumps({
+                "room_id": room_id, "run_id": fs.name,
+                "repo": fs.room["repo"],
+                "members": {name: ctx["agent"] for name, ctx in member_room_ctx.items()},
+            }, indent=2) + "\n")
 
         # ThreadPoolExecutor.submit() enqueues work immediately regardless of
         # worker availability -- it does not block until a slot is actually

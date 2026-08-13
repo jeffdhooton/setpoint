@@ -357,3 +357,22 @@ def test_decompose_bundle_runs_room_mode(tmp_path, monkeypatch):
     plan_client = _build_plan_client(kimi_spec)
     assert isinstance(plan_client, AgentPlanClient)
     assert not isinstance(plan_client, OpenAI)
+
+
+def test_room_manifest_written(tmp_path, monkeypatch):
+    import json as _json
+    monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
+    from setpoint import fleet as fleet_mod
+    monkeypatch.setattr(fleet_mod, "_runs_root", lambda: tmp_path / "runs")
+    room = FakeRoom()
+
+    class State:
+        status = "passed"
+
+    run_fleet(str(_write_bundle(tmp_path)), run_loop=lambda spec, **kw: State(),
+              room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
+    manifest = _json.loads((tmp_path / "fleets" / "demo" / "room.json").read_text())
+    assert manifest["room_id"] == "room1"
+    assert manifest["run_id"] == "demo"
+    assert set(manifest["members"]) == {"api", "ui"}
+    assert manifest["members"]["api"].endswith("-api")
