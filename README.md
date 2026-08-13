@@ -62,6 +62,16 @@ setpoint fleet stop                             # request a graceful fleet stop
 setpoint migrate <repo> [--dry-run]             # convert a repo's .loom/ specs to .setpoint/
 ```
 
+### Fleet rooms
+
+`setpoint fleet plan idea.md --repo <path> --engines claude,codex,kimi`
+decomposes an idea into member specs; review the generated `plan.md`, then
+`setpoint fleet run <bundle>/fleet.yaml` executes them as a coordinated team:
+a scry-served task board + message channel where workers claim tasks,
+negotiate interface contracts before building shared boundaries, and
+cross-review each other's branches across engines. See
+[docs/fleet-rooms.md](docs/fleet-rooms.md).
+
 ## Migrating from loom
 
 This tool was previously named **loom**. The rename is the only breaking

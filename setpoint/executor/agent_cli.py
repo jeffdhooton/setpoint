@@ -86,10 +86,16 @@ def _claude_parse(stdout: str) -> tuple[str, Usage]:
 
 
 def _codex_argv(prompt: str, cwd: Path, model: str) -> list[str]:
-    # --sandbox workspace-write lets the maker edit files in the worktree
-    # (exec defaults to read-only, which would block all edits). The judge
-    # uses read-only separately (see gates/agent_judge.py).
-    argv = ["codex", "exec", "--json", "--sandbox", "workspace-write"]
+    # --approve-for-me: setpoint executors always run non-interactively, so
+    # an approval prompt -- including for MCP tool calls like
+    # scry_task_claim -- has no one to answer it and codex auto-denies it
+    # ("user cancelled MCP tool call"). --approve-for-me routes approval
+    # requests through automatic review instead of stalling, and it already
+    # implies the workspace-write sandbox (the maker needs to edit files in
+    # the worktree; exec defaults to read-only). Do not also pass
+    # --sandbox workspace-write -- the two flags conflict. The judge uses
+    # read-only separately (see gates/agent_judge.py).
+    argv = ["codex", "exec", "--json", "--approve-for-me"]
     if model and model != "codex":
         argv += ["--model", model]
     argv.append(prompt)
@@ -127,3 +133,22 @@ class ClaudeExecutor(AgentCLIExecutor):
 class CodexExecutor(AgentCLIExecutor):
     def __init__(self, timeout: int = 1800, runner=subprocess.run):
         super().__init__(_codex_argv, _codex_parse, timeout=timeout, runner=runner)
+
+
+def _kimi_argv(prompt: str, cwd: Path, model: str) -> list[str]:
+    # --auto: fully autonomous prompt mode (kimi's analog of acceptEdits).
+    # Text output: kimi's stream-json event shape is undocumented, and the
+    # gate — not the transcript — decides success, so raw text is enough.
+    argv = ["kimi", "-p", prompt, "--output-format", "text", "--auto"]
+    if model and model != "kimi":
+        argv += ["-m", model]
+    return argv
+
+
+def _kimi_parse(stdout: str) -> tuple[str, Usage]:
+    return stdout.strip(), Usage()
+
+
+class KimiExecutor(AgentCLIExecutor):
+    def __init__(self, timeout: int = 1800, runner=subprocess.run):
+        super().__init__(_kimi_argv, _kimi_parse, timeout=timeout, runner=runner)
