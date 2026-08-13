@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import re
 import sys
 import threading
 import traceback
@@ -259,9 +260,15 @@ def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
     return member_room_ctx
 
 
-def _write_room_report(fs, room, room_id: str) -> str:
+def _write_room_report(fs, room, room_id: str, outcome=None) -> str:
     runs_root = _runs_root()
     lines = _status_lines(fs, runs_root)
+    if outcome:
+        lines += ["", "## Outcome", ""]
+        lines += [f"- {m}: {st}" for m, st in outcome["results"].items()]
+        if outcome["prs"]:
+            lines += ["", "### Deliverables", ""] + [f"- {u}" for u in outcome["prs"]]
+        lines += ["", "### Needs a human", ""] + [f"- {n}" for n in outcome["needs_human"]]
     lines += ["", "## Room transcript", ""]
     cursor = 0
     while True:
@@ -437,8 +444,14 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
         # fail before create_room ever returns one.
         if room is not None:
             if room_id is not None:
+                outcome = None
                 try:
-                    _write_room_report(fs, room, room_id)
+                    outcome = _close_the_loop(fs, room, room_id, results)
+                except Exception:
+                    print(f"setpoint fleet: closing ceremony failed:\n"
+                          f"{traceback.format_exc()}", file=sys.stderr)
+                try:
+                    _write_room_report(fs, room, room_id, outcome=outcome)
                 except Exception:
                     print(f"setpoint fleet: failed to write room report:\n"
                           f"{traceback.format_exc()}", file=sys.stderr)
@@ -451,6 +464,70 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
             # otherwise a report-write or close_room failure would leak the
             # scry mcp subprocess.
             room.close()
+
+
+
+_TERMINAL_TASK_STATUSES = {"done", "abandoned"}
+_PR_RE = re.compile(r"https://github\.com/\S+/pull/\d+")
+
+
+def _close_the_loop(fs, room, room_id, results):
+    """The closing ceremony. A fleet is not over when its processes exit; it
+    is over when the outcome is declared and every residual is assigned.
+    Reconciles non-terminal board tasks, posts the FLEET CLOSED message as
+    the room's final word, and returns the outcome for the report.
+
+    Reconciliation policy: a passed member's lingering task is finalized
+    done (its loop's gate passed); anything else is marked abandoned, which
+    clears the claim so a future wave can pick it up.
+    """
+    tasks = room.list_tasks(room_id)
+    msgs = room.read(room_id, cursor=0, limit=1000).get("messages") or []
+    prs = sorted({m for msg in msgs for m in _PR_RE.findall(msg.get("body", ""))})
+
+    reconciled = []
+    for t in tasks:
+        if t.get("status") in _TERMINAL_TASK_STATUSES:
+            continue
+        member = next((m for m in results
+                       if (t.get("claimed_by") or "").endswith(m)), None)
+        final = "done" if results.get(member) == "passed" else "abandoned"
+        try:
+            room.post(room_id, "orchestrator", "status",
+                      f"reconciling board: task '{t.get('title', t['id'])}' left "
+                      f"'{t.get('status')}' by {t.get('claimed_by') or 'nobody'} — "
+                      f"marking {final} (member outcome: {results.get(member, 'unknown')})",
+                      task_id=t["id"])
+            room.update_task_status(room_id, t["id"], final)
+        except Exception as e:
+            print(f"setpoint fleet: board reconcile failed for {t['id']}: {e}",
+                  file=sys.stderr)
+        reconciled.append((t.get("title", t["id"]), t.get("status"), final))
+
+    needs_human = []
+    if prs:
+        needs_human.append(f"review and merge: {', '.join(prs)}")
+    for title, was, final in reconciled:
+        if final == "abandoned":
+            needs_human.append(f"abandoned task needs a decision or a next wave: {title}")
+    for member, st in sorted(results.items()):
+        if st != "passed":
+            needs_human.append(f"member '{member}' ended '{st}' — read its run log "
+                               f"and the transcript before trusting or discarding its work")
+    if not needs_human:
+        needs_human.append("nothing — all members passed and delivered")
+
+    body = ("FLEET CLOSED — " + fs.name + "\n\n"
+            + "Member outcomes:\n"
+            + "\n".join(f"- {m}: {st}" for m, st in sorted(results.items())) + "\n\n"
+            + ("Deliverables:\n" + "\n".join(f"- {u}" for u in prs) + "\n\n" if prs else "")
+            + "Needs a human:\n" + "\n".join(f"- {n}" for n in needs_human))
+    try:
+        room.post(room_id, "orchestrator", "status", body)
+    except Exception as e:
+        print(f"setpoint fleet: failed to post closing message: {e}", file=sys.stderr)
+    return {"prs": prs, "needs_human": needs_human, "reconciled": reconciled,
+            "results": dict(sorted(results.items()))}
 
 
 def _fleet_out_dir(fs, runs_root: Path) -> Path:

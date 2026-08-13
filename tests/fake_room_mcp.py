@@ -49,6 +49,12 @@ def handle(name, a, rid):
              "interfaces": a.get("interfaces", ""), "status": "open"}
         tasks[(room["id"], t["id"])] = t
         return tool_result(rid, t)
+    if name == "scry_task_update":
+        t = tasks.get((room["id"], a["task_id"]))
+        if t is None:
+            return tool_result(rid, f'task {a["task_id"]!r} not found', True)
+        t["status"] = a["status"]
+        return tool_result(rid, t)
     if name == "scry_task_list":
         return tool_result(rid, [t for (r, _), t in sorted(tasks.items()) if r == room["id"]])
     if name == "scry_post":

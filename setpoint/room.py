@@ -116,6 +116,10 @@ class RoomClient:
             args["interfaces"] = interfaces
         return self._tool("scry_task_post", args)
 
+    def update_task_status(self, room_id: str, task_id: str, status: str) -> dict:
+        return self._tool("scry_task_update", {"room_id": room_id,
+                                               "task_id": task_id, "status": status})
+
     def list_tasks(self, room_id: str) -> list[dict]:
         return self._tool("scry_task_list", {"room_id": room_id})
 

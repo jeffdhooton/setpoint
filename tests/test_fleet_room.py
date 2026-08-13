@@ -39,6 +39,10 @@ class FakeRoom:
                for i, (k, f, b) in enumerate(self.msgs)]
         return {"messages": out, "cursor": len(out)}
 
+    def update_task_status(self, room_id, task_id, status):
+        self.calls.append(("task_update", task_id, status))
+        return {"id": task_id, "status": status}
+
     def list_tasks(self, room_id):
         return []
 
@@ -378,3 +382,50 @@ def test_room_manifest_written(tmp_path, monkeypatch):
     assert manifest["members"]["api"].endswith("-api")
     local = _json.loads((tmp_path / "room.json").read_text())
     assert local == manifest
+
+
+def test_closing_ceremony_declares_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
+    from setpoint import fleet as fleet_mod
+    monkeypatch.setattr(fleet_mod, "_runs_root", lambda: tmp_path / "runs")
+
+    class LingeringRoom(FakeRoom):
+        def post_task(self, room_id, title, body="", depends_on=None, interfaces=""):
+            t = super().post_task(room_id, title, body, depends_on, interfaces)
+            # simulate workers leaving tasks non-terminal, with claims
+            tasks[(("room1"), t["id"])] = {"id": t["id"], "title": title,
+                                           "status": "review",
+                                           "claimed_by": "claude-" + ("api" if title == "API" else "ui")}
+            return t
+        def list_tasks(self, room_id):
+            return [t for (r, _), t in sorted(tasks.items()) if r == "room1"]
+        def post(self, room_id, from_, kind, body, task_id=""):
+            m = super().post(room_id, from_, kind, body, task_id)
+            return m
+
+    tasks = {}
+
+    class State:
+        status = "passed"
+
+    class FailState:
+        status = "stopped"
+
+    def run_loop(spec, **kw):
+        return State() if spec.name == "api" else FailState()
+
+    room = LingeringRoom()
+    run_fleet(str(_write_bundle(tmp_path)), run_loop=run_loop,
+              room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
+
+    updates = [c for c in room.calls if c[0] == "task_update"]
+    finals = {c[2] for c in updates}
+    assert finals == {"done", "abandoned"}  # passed member finalized, stopped member abandoned
+
+    closing = [b for k, f, b in room.msgs if "FLEET CLOSED" in b]
+    assert len(closing) == 1
+    assert "Needs a human" in closing[0]
+    assert "ended 'stopped'" in closing[0]
+
+    report = (tmp_path / "fleets" / "demo" / "report.md").read_text()
+    assert "## Outcome" in report and "Needs a human" in report
