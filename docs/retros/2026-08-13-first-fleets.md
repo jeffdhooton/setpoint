@@ -11,44 +11,44 @@ run logs, and the operating session's own notes.
 
 ## Setpoint
 
-1. **`passed` fires before review resolves.** Wave 1 declared a member
+1. **`passed` fires before review resolves.** **FIXED** (Gate fleet success on a resolved review). Wave 1 declared a member
    passed while its cross-reviewer was mid-CHANGES on real findings.
    Split the state: `gate-passed` vs `review-approved`; only the latter
    is a fleet-level success. (Highest priority — it makes "passed" a
    false signal.)
-2. **Iteration cap burned on out-of-scope gate failures.** The sweep
+2. **Iteration cap burned on out-of-scope gate failures.** **FIXED** (Add a scoped gate and the completed-capped status). The sweep
    finished at iteration 2 but spent 3-6 re-running a full-journey gate
    red on pre-existing flakes, ending `stopped`. Add scoped gates per
    task + a distinct terminal status (`completed-capped`) when the
    worker's deliverable is verified but the broad gate isn't its fault.
-3. **Worktrees cut from stale local refs.** All wave-1 worktrees started
+3. **Worktrees cut from stale local refs.** **FIXED** (Cut fleet worktrees from the fetched origin base). All wave-1 worktrees started
    236 commits behind origin; a worker noticed by luck and broadcast a
    manual fix. Fleet launch must fetch and branch from `origin/<base>`.
-4. **Port/stack collisions inside worktrees.** The sweep's first dynamic
+4. **Port/stack collisions inside worktrees.** **FIXED** (Derive a port base per worktree). The sweep's first dynamic
    results measured the wrong web tree via a reused port (retracted by
    the agent itself). Derive ports per worktree; never silently reuse.
    (#156 partially fixed repo-side; setpoint should own this generally.)
-5. **Declared gate ≠ repo CI.** A PR passed the member gate while the
+5. **Declared gate ≠ repo CI.** **FIXED** (Wire the repo's own checks into fleet plans). A PR passed the member gate while the
    repo's `bar` check was red; only reviewer initiative caught it. Fleet
    plan should copy the repo's required checks into verify commands.
-6. **Duplicate PRs per branch.** Worker-opened PR (room protocol) +
+6. **Duplicate PRs per branch.** **FIXED** (Adopt an existing open PR, never open a second). Worker-opened PR (room protocol) +
    deliver-opened PR. Deliver must detect an existing open PR first;
    the room-worker skill should request review in-room and leave PR
    creation to deliver.
-7. **Review routing is broadcast-and-hope.** A worker pinged three named
+7. **Review routing is broadcast-and-hope.** **FIXED** (Assign a named reviewer per task at launch). A worker pinged three named
    agents over three messages before its review was picked up. The
    orchestrator should assign a specific different-engine reviewer.
-8. **Single-engine fleets silently skip review.** Warn at `fleet plan`
+8. **Single-engine fleets silently skip review.** **FIXED** (Gate fleet success on a resolved review). Warn at `fleet plan`
    time; at run time mark affected tasks explicitly `unreviewed` in the
    outcome rather than omitting quietly.
-9. **Run state is global per spec name.** Wave 2 reusing a member spec
+9. **Run state is global per spec name.** **FIXED** (Namespace member run state per fleet). Wave 2 reusing a member spec
    overwrote wave 1's run state (viewer showed a finished fleet as 3/4).
    Namespace `~/.setpoint/runs/` per fleet. Viewer works around it by
    freezing ended fleets from report.md; the store should be right.
-10. **Cold-start builds.** Fresh worktrees lack workspace `dist/`;
+10. **Cold-start builds.** **FIXED** (Run a prepare command once per fresh worktree). Fresh worktrees lack workspace `dist/`;
     `demo:verify` fails until `pnpm build`. Spec-level `prepare` command
     run once per worktree before the loop starts.
-11. **Spend column reads $0.00 for CLI engines.** Track wall-time and
+11. **Spend column reads $0.00 for CLI engines.** **FIXED** (Report elapsed time and honest spend). Track wall-time and
     iteration counts as the cost signal, or label the column honestly.
 
 ## Scry rooms
