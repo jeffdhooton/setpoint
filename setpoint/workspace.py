@@ -67,6 +67,16 @@ class Worktree:
         self.path = None
 
 
+def _run_prepare(command: str, cwd: Path) -> None:
+    print(f"setpoint: workspace.prepare — {command}")
+    proc = subprocess.run(command, shell=True, cwd=cwd,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-2000:]
+        raise RuntimeError(
+            f"workspace.prepare failed (exit {proc.returncode}): {command}\n{tail}")
+
+
 def prepare_workspace(spec) -> tuple[Path, Worktree | None]:
     if spec.workspace.worktree:
         branch = spec.workspace.branch or f"setpoint/{spec.name}"
@@ -74,5 +84,16 @@ def prepare_workspace(spec) -> tuple[Path, Worktree | None]:
         # must be cut from origin/develop, not from main.
         base = (getattr(spec, "deliver", None) or {}).get("base") or "main"
         wt = Worktree(repo=spec.workspace.repo, branch=branch, base=base)
-        return wt.create(), wt
+        cwd = wt.create()
+        if spec.workspace.prepare:
+            try:
+                _run_prepare(spec.workspace.prepare, cwd)
+            except Exception:
+                # Do not leak the worktree when prepare fails -- the run is
+                # over before it started.
+                wt.cleanup()
+                raise
+        return cwd, wt
+    if spec.workspace.prepare:
+        _run_prepare(spec.workspace.prepare, spec.workspace.repo)
     return spec.workspace.repo, None

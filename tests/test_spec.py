@@ -387,3 +387,23 @@ stop: {no_progress_after: null}
     apply_overlay(spec, {"no_progress_after": 3})
     assert spec.stop.no_progress_after is None
     assert spec.execute.plan_hint == ""
+
+
+def test_workspace_prepare_loads_and_defaults_to_none(tmp_path):
+    from setpoint.spec import load_spec
+    import yaml
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text(yaml.safe_dump({
+        "name": "n", "type": "coding", "goal": "g",
+        "workspace": {"repo": str(tmp_path), "prepare": "pnpm build"},
+        "verify": {"gate": "command", "command": "true"},
+    }))
+    assert load_spec(str(p)).workspace.prepare == "pnpm build"
+
+    p2 = tmp_path / "s2.setpoint.yaml"
+    p2.write_text(yaml.safe_dump({
+        "name": "n", "type": "coding", "goal": "g",
+        "workspace": {"repo": str(tmp_path)},
+        "verify": {"gate": "command", "command": "true"},
+    }))
+    assert load_spec(str(p2)).workspace.prepare is None

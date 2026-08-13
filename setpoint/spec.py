@@ -17,6 +17,10 @@ class Workspace:
     repo: Path
     worktree: bool = False
     branch: str | None = None
+    # Shell command run once in a freshly created worktree before the loop
+    # starts. Fresh worktrees have no build output, so a gate that needs
+    # `dist/` fails cold through every iteration otherwise.
+    prepare: str | None = None
 
 
 @dataclass
@@ -108,6 +112,7 @@ def load_spec(path: str) -> LoopSpec:
         repo=Path(ws_raw["repo"]).expanduser(),
         worktree=bool(ws_raw.get("worktree", False)),
         branch=ws_raw.get("branch"),
+        prepare=ws_raw.get("prepare"),
     )
 
     ctx_raw = raw.get("context") or {}

@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from setpoint.workspace import Worktree, prepare_workspace
 from setpoint.spec import LoopSpec, Workspace, Context, ExecuteCfg, VerifyCfg, StopCfg, BudgetCfg
 
@@ -88,6 +90,32 @@ def test_prepare_workspace_passes_deliver_base_as_worktree_base(tmp_path):
     assert wt is not None
     assert wt.base == "develop"
     wt.cleanup()
+
+
+def test_prepare_command_runs_once_in_the_worktree(tmp_path):
+    repo = _make_repo(tmp_path)
+    spec = LoopSpec(name="n", goal="g", type="coding",
+                    workspace=Workspace(repo=repo, worktree=True, branch=None,
+                                        prepare="echo built > built.txt"),
+                    context=Context(), execute=ExecuteCfg(),
+                    verify=VerifyCfg(command="true"),
+                    stop=StopCfg(), budget=BudgetCfg())
+    cwd, wt = prepare_workspace(spec)
+    assert (cwd / "built.txt").read_text().strip() == "built"
+    assert not (repo / "built.txt").exists()  # ran in the worktree, not the repo
+    wt.cleanup()
+
+
+def test_prepare_command_failure_raises(tmp_path):
+    repo = _make_repo(tmp_path)
+    spec = LoopSpec(name="n", goal="g", type="coding",
+                    workspace=Workspace(repo=repo, worktree=True, branch=None,
+                                        prepare="exit 3"),
+                    context=Context(), execute=ExecuteCfg(),
+                    verify=VerifyCfg(command="true"),
+                    stop=StopCfg(), budget=BudgetCfg())
+    with pytest.raises(RuntimeError, match="workspace.prepare failed"):
+        prepare_workspace(spec)
 
 
 def test_prepare_workspace_no_worktree(tmp_path):
