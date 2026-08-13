@@ -36,7 +36,7 @@ Respond with ONLY a JSON object (fenced or bare) of the shape:
 """
 
 
-def _default_oneshot(engine: str, prompt: str) -> str:
+def _default_oneshot(engine: str, prompt: str, cwd: str | None = None) -> str:
     from setpoint.executor.agent_cli import (_claude_argv, _claude_parse,
                                              _codex_argv, _codex_parse,
                                              _kimi_argv, _kimi_parse)
@@ -44,7 +44,14 @@ def _default_oneshot(engine: str, prompt: str) -> str:
              "codex": (_codex_argv, _codex_parse),
              "kimi": (_kimi_argv, _kimi_parse)}
     argv_fn, parse_fn = table[engine]
-    proc = subprocess.run(argv_fn(prompt, Path.cwd(), engine),
+    # cwd matters: codex's sandbox and claude's trust context are scoped to
+    # the process cwd, and a cross-engine review one-shot needs to actually
+    # be run inside the repo it's reviewing (`git diff` etc.), not wherever
+    # the orchestrator process happens to be. decompose's own planning call
+    # has no repo checked out yet, so it leaves cwd=None and this falls back
+    # to the process cwd.
+    run_dir = Path(cwd) if cwd else Path.cwd()
+    proc = subprocess.run(argv_fn(prompt, run_dir, engine), cwd=run_dir,
                           capture_output=True, text=True, timeout=600,
                           stdin=subprocess.DEVNULL)
     text, _ = parse_fn(proc.stdout or "")
@@ -96,7 +103,14 @@ def _member_spec(t: dict, repo: str) -> dict:
         "execute": {"engine": t["engine"]},
         "verify": {"gate": "command", "command": t["verify_command"]},
         "stop": {"max_iters": 6},
-        "deliver": {},
+        # Must be truthy: run_loop only calls deliver() when
+        # `getattr(spec, "deliver", None)` is truthy (spec.py / __main__.py
+        # run_loop), so an empty {} here would silently skip commit/push/PR
+        # and the worktree cleanup would then discard the member's work.
+        # push/pr already default True inside deliver() even for an empty
+        # dict, so these keys are set explicitly just to keep the dict
+        # non-empty/truthy — see setpoint/deliver.py deliver().
+        "deliver": {"push": True, "pr": True},
     }
 
 
@@ -117,6 +131,12 @@ def _plan_md(idea_name: str, tasks: list[dict]) -> str:
 def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
               oneshot=None) -> Path:
     oneshot = oneshot or _default_oneshot
+    # Absolutize here, at the single entry point, so every downstream
+    # consumer (member specs' workspace.repo, fleet.yaml's room.repo) gets an
+    # absolute path regardless of the caller's cwd -- a cwd-relative repo
+    # path baked into those files would break as soon as they're read from
+    # anywhere other than the directory decompose() itself ran in.
+    repo = str(Path(repo).expanduser().resolve())
     idea = Path(idea_path).read_text()
     name = Path(idea_path).stem
 
@@ -144,6 +164,7 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
         "room": {
             "repo": repo,
             "tasks": [{"member": t["name"], "title": t["title"],
+                       "goal": t.get("goal", ""),
                        "interfaces": t.get("interfaces", ""),
                        "depends_on": t.get("depends_on", [])} for t in tasks],
         },

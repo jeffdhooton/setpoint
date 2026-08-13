@@ -126,7 +126,7 @@ def load_spec(path: str) -> LoopSpec:
     # to the engine sentinel ("claude"/"codex") so _claude_argv/_codex_argv omit
     # --model and the CLI uses its own configured default. Only the deepseek
     # engine keeps the deepseek default.
-    default_model = engine if engine in {"claude", "codex"} else "deepseek-v4-flash"
+    default_model = engine if engine in {"claude", "codex", "kimi"} else "deepseek-v4-flash"
     execute = ExecuteCfg(
         plan_model=ex_raw.get("plan_model", "deepseek-v4-pro"),
         model=ex_raw.get("model", default_model),

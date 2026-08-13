@@ -30,7 +30,7 @@ def _build_executor(spec):
 
 
 def _build_plan_client(spec):
-    if spec.execute.engine in ("claude", "codex"):
+    if spec.execute.engine in ("claude", "codex", "kimi"):
         from setpoint.executor.agent_plan import AgentPlanClient
         return AgentPlanClient()
     from setpoint.clients import make_deepseek_client
@@ -165,7 +165,8 @@ def cmd_migrate(repo: str, dry_run: bool = False) -> int:
 def cmd_fleet(rest: list[str]) -> int:
     from setpoint import fleet
     if not rest:
-        print("fleet: usage: setpoint fleet {run <fleet.yaml> [--fresh] | status <fleet.yaml> | stop}",
+        print("fleet: usage: setpoint fleet {run <fleet.yaml> [--fresh] | status <fleet.yaml> | "
+              "stop | plan <idea.md> --repo <path> --engines a,b,c [--out DIR]}",
               file=sys.stderr)
         return 1
     sub, args = rest[0], rest[1:]
@@ -239,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("setpoint — DISCOVER->PLAN->EXECUTE->VERIFY->ITERATE loop engine")
         print("usage: setpoint {run <spec.yaml> [--fresh] | resume <spec.yaml> | ls | "
-              "logs <name> | migrate <repo> [--dry-run] | fleet run|status|stop}")
+              "logs <name> | migrate <repo> [--dry-run] | fleet run|status|stop|plan}")
         return 0
 
     cmd, rest = argv[0], argv[1:]

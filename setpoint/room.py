@@ -74,7 +74,11 @@ class RoomClient:
             line = self._proc.stdout.readline()
             if not line:
                 raise RoomError(f"scry mcp exited during {method}")
-            resp = json.loads(line)
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise RoomError(
+                    f"{method}: malformed JSON from scry mcp stdout: {line!r}") from e
             # Skip notifications (have "method" key or ID doesn't match)
             if "method" in resp or resp.get("id") != self._next_id:
                 continue
@@ -88,7 +92,10 @@ class RoomClient:
         text = result["content"][0]["text"]
         if result.get("isError"):
             raise RoomError(f"{name}: {text}")
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise RoomError(f"{name}: malformed JSON in tool result: {text!r}") from e
 
     # -- room API ----------------------------------------------------------
 

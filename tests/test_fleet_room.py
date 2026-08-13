@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -88,8 +89,8 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
         seen_notes[spec.name] = spec.context.notes
         return State()
 
-    def fake_oneshot(engine, prompt):
-        reviews.append((engine, prompt))
+    def fake_oneshot(engine, prompt, cwd=None):
+        reviews.append((engine, prompt, cwd))
         return "APPROVED"
 
     results = run_fleet(str(_write_bundle(tmp_path)), run_loop=fake_run_loop,
@@ -108,12 +109,15 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
     assert isinstance(api_notes, str)
     assert "room_id: room1" in api_notes and "task_id: t1" in api_notes
     assert "agent: claude-api" in api_notes
-    # cross-review dispatched with a different engine than the author
+    # cross-review dispatched with a different engine than the author, and
+    # run with cwd=repo (codex's sandbox / claude's trust context are
+    # cwd-scoped, so the review must run inside the repo it targets)
     assert len(reviews) == 2
-    for engine, prompt in reviews:
+    for engine, prompt, cwd in reviews:
         assert "room1" in prompt
-    api_review = next(p for e, p in reviews if "setpoint/api" in p)
-    api_reviewer = next(e for e, p in reviews if "setpoint/api" in p)
+        assert cwd == str(tmp_path)
+    api_review = next(p for e, p, c in reviews if "setpoint/api" in p)
+    api_reviewer = next(e for e, p, c in reviews if "setpoint/api" in p)
     assert api_reviewer != "claude"
     # report written with transcript, alongside status.md's established
     # location: runs_root.parent / "fleets" / <name> (runs_root here is
@@ -179,7 +183,7 @@ def test_room_tasks_forward_reference_resolves(tmp_path, monkeypatch):
         status = "passed"
 
     run_fleet(str(fleet), run_loop=lambda spec, **kw: State(),
-             room_client=room, oneshot=lambda e, p: "APPROVED")
+             room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
 
     # "api" is posted first (gets t1) despite being declared second in
     # room.tasks; "ui"'s depends_on resolves to that id.
@@ -202,7 +206,7 @@ def test_room_tasks_unknown_depends_on_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="ghost"):
         run_fleet(str(fleet), run_loop=lambda spec, **kw: None,
-                 room_client=room, oneshot=lambda e, p: "APPROVED")
+                 room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
 
     # the dependency error is raised after create_room but before any task
     # is posted -- teardown must still close the room.
@@ -223,7 +227,7 @@ def test_room_tasks_malformed_entry_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match=r"room\.tasks\[0\]"):
         run_fleet(str(fleet), run_loop=lambda spec, **kw: None,
-                 room_client=FakeRoom(), oneshot=lambda e, p: "APPROVED")
+                 room_client=FakeRoom(), oneshot=lambda e, p, cwd=None: "APPROVED")
 
 
 def test_room_setup_failure_still_closes_room(tmp_path, monkeypatch):
@@ -254,8 +258,87 @@ def test_room_setup_failure_still_closes_room(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="boom"):
         run_fleet(str(fleet), run_loop=lambda spec, **kw: None,
-                 room_client=room, oneshot=lambda e, p: "APPROVED")
+                 room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
 
     assert ("create", "demo", str(tmp_path)) in room.calls
     assert ("close", "room1") in room.calls
     assert ("client_close",) in room.calls
+
+
+def test_decompose_bundle_runs_room_mode(tmp_path, monkeypatch):
+    """End-to-end: decompose() a two-task idea (one claude task, one kimi
+    task) into a fleet bundle, then run_fleet it in room mode. This covers
+    all three Criticals from the final review in one shot:
+      1. spec.py's kimi model default (a bad default would surface as a
+         DeepSeek model id being handed to the kimi CLI).
+      2. __main__._build_plan_client routing kimi to AgentPlanClient instead
+         of make_deepseek_client() (checked directly below, without
+         DEEPSEEK_API_KEY, so a wrong route would raise SystemExit here).
+      3. decompose's deliver dict being truthy (checked directly on the specs
+         run_fleet actually hands to run_loop).
+    """
+    from setpoint.decompose import decompose
+
+    idea = tmp_path / "idea.md"
+    idea.write_text("Build a lead tracker")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def canned_oneshot(engine, prompt):
+        return json.dumps({"tasks": [
+            {"name": "build-api", "title": "Build the API",
+             "goal": "Implement GET /leads", "interfaces": "", "depends_on": [],
+             "verify_command": "true", "engine": "claude"},
+            {"name": "build-worker", "title": "Build the worker",
+             "goal": "Implement the background worker", "interfaces": "",
+             "depends_on": [], "verify_command": "true", "engine": "kimi"},
+        ]})
+
+    fleet_path = decompose(str(idea), str(repo), ["claude", "kimi"],
+                           str(tmp_path / "out"), oneshot=canned_oneshot)
+
+    monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
+    seen_specs = {}
+
+    class State:
+        status = "passed"
+
+    def fake_run_loop(spec, *, fresh=False, ui=None, abort_check=None):
+        seen_specs[spec.name] = spec
+        return State()
+
+    room = FakeRoom()
+    results = run_fleet(str(fleet_path), run_loop=fake_run_loop, room_client=room,
+                        oneshot=lambda e, p, cwd=None: "APPROVED")
+
+    assert results == {"build-api": "passed", "build-worker": "passed"}
+    assert set(seen_specs) == {"build-api", "build-worker"}
+
+    # Critical 3: deliver must be truthy on every member spec, or run_loop's
+    # `if getattr(spec, "deliver", None):` gate would skip commit/push/PR.
+    for spec in seen_specs.values():
+        assert spec.deliver
+
+    # kimi task keeps engine == "kimi" all the way through the bundle, and
+    # Critical 1: load_spec's default_model must not hand the kimi CLI a
+    # DeepSeek model id (404) -- it should fall back to the "kimi" sentinel.
+    assert seen_specs["build-worker"].execute.engine == "kimi"
+    assert seen_specs["build-worker"].execute.model == "kimi"
+
+    # Every member is room-coordinated: ROOM CONTEXT appended to notes.
+    for spec in seen_specs.values():
+        assert "ROOM CONTEXT" in spec.context.notes
+
+    # Criticals 1 & 2, checked directly: _build_plan_client for a kimi spec
+    # must return the no-op AgentPlanClient, not fall through to
+    # make_deepseek_client() -- which would raise SystemExit here since
+    # DEEPSEEK_API_KEY is deliberately unset.
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    from setpoint.__main__ import _build_plan_client
+    from setpoint.executor.agent_plan import AgentPlanClient
+    from openai import OpenAI
+
+    kimi_spec = seen_specs["build-worker"]
+    plan_client = _build_plan_client(kimi_spec)
+    assert isinstance(plan_client, AgentPlanClient)
+    assert not isinstance(plan_client, OpenAI)

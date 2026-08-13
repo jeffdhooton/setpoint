@@ -53,7 +53,10 @@ def test_decompose_writes_bundle(tmp_path):
                                  "branch": "setpoint/build-api"}
     assert spec["execute"]["engine"] == "claude"
     assert spec["verify"] == {"gate": "command", "command": "pytest tests/api -q"}
-    assert spec["deliver"] == {}
+    # Must be truthy: run_loop gates deliver() on `if getattr(spec, "deliver", None)`,
+    # so an empty {} would silently skip commit/push/PR for every fleet member.
+    assert spec["deliver"]
+    assert spec["deliver"] == {"push": True, "pr": True}
 
     from setpoint.spec import load_spec
     loaded = load_spec(str(out / "build-api.setpoint.yaml"))

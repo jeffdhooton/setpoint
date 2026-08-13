@@ -129,7 +129,19 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
     prompt = REVIEW_PROMPT.format(task_id=task_id, room_id=room_id,
                                   branch=room_ctx["branch"], repo=room_ctx["repo"],
                                   reviewer=f"{reviewer_engine}-reviewer")
-    oneshot(reviewer_engine, prompt)
+    # cwd=repo: the review targets that repo (git diff, reading the branch),
+    # and codex's sandbox / claude's trust context are scoped to the process
+    # cwd -- running the one-shot from the orchestrator's own cwd would point
+    # the reviewer at the wrong (or no) repo.
+    try:
+        result_text = oneshot(reviewer_engine, prompt, cwd=room_ctx["repo"])
+    except Exception:
+        result_text = ""
+        print(f"setpoint fleet: review one-shot for {member_name} by "
+              f"{reviewer_engine} failed:\n{traceback.format_exc()}", file=sys.stderr)
+    if not (result_text or "").strip():
+        _post("status", f"review of {member_name} by {reviewer_engine} "
+                        f"produced no output/failed")
 
 
 def _order_tasks_by_dependency(tasks: list[dict]) -> list[int]:
@@ -184,6 +196,20 @@ def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
         if not entry.get("member") or not entry.get("title"):
             raise ValueError(f"room.tasks[{i}] missing required 'member' or 'title'")
 
+    # room.tasks and fleet members must be the same set in both directions --
+    # a task naming a member that isn't in the fleet can never be worked, and
+    # a fleet member with no room.tasks entry would run outside room
+    # coordination while its siblings believe every member is tracked on the
+    # board (ROOM CONTEXT injection, cross-review dispatch, and the "fleet
+    # launched: N tasks" post all key off room.tasks).
+    task_members = {entry["member"] for entry in tasks}
+    unknown = task_members - set(name_to_path)
+    if unknown:
+        raise ValueError(f"room.tasks references unknown fleet member(s): {sorted(unknown)}")
+    untracked = set(name_to_path) - task_members
+    if untracked:
+        raise ValueError(f"fleet member(s) have no room.tasks entry: {sorted(untracked)}")
+
     order = _order_tasks_by_dependency(tasks)
 
     name_to_task_id: dict[str, str] = {}
@@ -201,7 +227,11 @@ def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
             fleet_engines.append(engine)
 
         deps = [name_to_task_id[d] for d in (entry.get("depends_on") or [])]
-        task = room.post_task(room_id, entry["title"], body=entry.get("body", ""),
+        # decompose() puts the task's goal on the "goal" field; fall back to
+        # a plain "body" for hand-authored fleet.yaml files that use it
+        # directly. Missing/empty is fine -- post_task treats "" as no body.
+        body = entry.get("goal") or entry.get("body") or ""
+        task = room.post_task(room_id, entry["title"], body=body,
                               depends_on=deps, interfaces=entry.get("interfaces", ""))
         task_id = task["id"]
         name_to_task_id[member] = task_id
@@ -236,7 +266,12 @@ def _write_room_report(fs, room, room_id: str) -> str:
         for m in msgs:
             lines.append(f"- [{m.get('kind')}] {m.get('from')} "
                          f"(task {m.get('task_id')}): {m.get('body')}")
-        cursor = resp.get("cursor", cursor)
+        new_cursor = resp.get("cursor", cursor)
+        if new_cursor == cursor:
+            # A buggy/misbehaving server that returns messages but never
+            # advances the cursor would otherwise loop here forever.
+            break
+        cursor = new_cursor
     text = "\n".join(lines) + "\n"
     out_dir = _fleet_out_dir(fs, runs_root)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -347,8 +382,23 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
                 sem.acquire()
                 if sentinel.exists():
                     sem.release()
-                    results[_run_name(member)] = "skipped"
+                    name = _run_name(member)
+                    results[name] = "skipped"
                     skipped += 1
+                    if room is not None and room_id is not None:
+                        try:
+                            task_id = member_room_ctx.get(name, {}).get("task_id", "")
+                            body = f"{name}: skipped (STOP sentinel)"
+                            if room_lock is not None:
+                                with room_lock:
+                                    room.post(room_id, "orchestrator", "status", body,
+                                             task_id=task_id)
+                            else:
+                                room.post(room_id, "orchestrator", "status", body,
+                                         task_id=task_id)
+                        except Exception:
+                            print(f"setpoint fleet: failed to post skip notice for "
+                                  f"{name} to room:\n{traceback.format_exc()}", file=sys.stderr)
                     continue
                 futures.append(ex.submit(wrapped, member))
 
@@ -367,8 +417,19 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
         # fail before create_room ever returns one.
         if room is not None:
             if room_id is not None:
-                _write_room_report(fs, room, room_id)
-                room.close_room(room_id)
+                try:
+                    _write_room_report(fs, room, room_id)
+                except Exception:
+                    print(f"setpoint fleet: failed to write room report:\n"
+                          f"{traceback.format_exc()}", file=sys.stderr)
+                try:
+                    room.close_room(room_id)
+                except Exception:
+                    print(f"setpoint fleet: failed to close room {room_id}:\n"
+                          f"{traceback.format_exc()}", file=sys.stderr)
+            # Unconditional last step regardless of what happened above --
+            # otherwise a report-write or close_room failure would leak the
+            # scry mcp subprocess.
             room.close()
 
 
