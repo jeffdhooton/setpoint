@@ -47,3 +47,28 @@ def test_close_idempotent():
     c.create_room("r", "/x")
     c.close()
     c.close()  # second close must not raise
+
+
+def test_missing_binary():
+    c = RoomClient(argv=["definitely-not-a-binary-xyz"])
+    with pytest.raises(RoomError, match="not found"):
+        c.create_room("r", "/x")
+
+
+def test_notification_skipping():
+    with RoomClient(argv=FAKE + ["--noisy"]) as c:
+        room = c.create_room("run-1", "/repo")
+        assert room["status"] == "open" and room["id"]
+
+        t1 = c.post_task(room["id"], "build API", interfaces="GET /leads")
+        t2 = c.post_task(room["id"], "build UI", depends_on=[t1["id"]])
+        board = c.list_tasks(room["id"])
+        assert [t["title"] for t in board] == ["build API", "build UI"]
+        assert board[1]["depends_on"] == [t1["id"]]
+
+        c.post(room["id"], from_="orchestrator", kind="status", body="launched")
+        read = c.read(room["id"], cursor=0)
+        assert read["cursor"] == 1 and read["messages"][0]["kind"] == "status"
+
+        closed = c.close_room(room["id"])
+        assert closed["status"] == "closed"

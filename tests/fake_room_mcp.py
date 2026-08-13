@@ -1,9 +1,10 @@
 """Fake `scry mcp` stdio server: line-delimited JSON-RPC, in-memory rooms.
 
-Run as: python tests/fake_room_mcp.py
+Run as: python tests/fake_room_mcp.py [--noisy]
 Supports initialize, notifications/initialized, tools/call for the 8 room
 tools. Tool results mirror scry's: result.content[0].text is a JSON blob,
 result.isError True with a message text on failure.
+With --noisy, emits a notification before each response to test client robustness.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ rooms: dict[str, dict] = {}
 tasks: dict[tuple[str, str], dict] = {}
 msgs: dict[str, list[dict]] = {}
 counter = {"n": 0}
+noisy = "--noisy" in sys.argv
 
 
 def _id() -> str:
@@ -70,11 +72,20 @@ for line in sys.stdin:
     req = json.loads(line)
     method, rid = req.get("method"), req.get("id")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": rid,
-                          "result": {"protocolVersion": "2024-11-05",
-                                     "capabilities": {}, "serverInfo": {"name": "fake"}}}),
-              flush=True)
+        resp = {"jsonrpc": "2.0", "id": rid,
+                "result": {"protocolVersion": "2024-11-05",
+                           "capabilities": {}, "serverInfo": {"name": "fake"}}}
+        if noisy:
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/message",
+                              "params": {"level": "info", "data": "noise"}}),
+                  flush=True)
+        print(json.dumps(resp), flush=True)
     elif method == "tools/call":
         p = req["params"]
-        print(json.dumps(handle(p["name"], p.get("arguments", {}), rid)), flush=True)
+        resp = handle(p["name"], p.get("arguments", {}), rid)
+        if noisy:
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/message",
+                              "params": {"level": "info", "data": "noise"}}),
+                  flush=True)
+        print(json.dumps(resp), flush=True)
     # notifications: no response

@@ -24,9 +24,12 @@ class RoomClient:
 
     def _ensure(self) -> subprocess.Popen:
         if self._proc is None or self._proc.poll() is not None:
-            self._proc = subprocess.Popen(
-                self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True)
+            try:
+                self._proc = subprocess.Popen(
+                    self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, text=True)
+            except FileNotFoundError:
+                raise RoomError(f"scry binary not found: {self.argv[0]}")
             self._rpc("initialize", {"protocolVersion": "2024-11-05",
                                      "capabilities": {},
                                      "clientInfo": {"name": "setpoint", "version": "1"}})
@@ -38,7 +41,11 @@ class RoomClient:
             try:
                 self._proc.stdin.close()
                 self._proc.terminate()
-                self._proc.wait(timeout=5)
+                try:
+                    self._proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
+                    self._proc.wait(timeout=5)
             except Exception:
                 pass
             self._proc = None
@@ -63,13 +70,17 @@ class RoomClient:
         self._next_id += 1
         self._send({"jsonrpc": "2.0", "id": self._next_id,
                     "method": method, "params": params})
-        line = self._proc.stdout.readline()
-        if not line:
-            raise RoomError(f"scry mcp exited during {method}")
-        resp = json.loads(line)
-        if "error" in resp:
-            raise RoomError(f"{method}: {resp['error']}")
-        return resp["result"]
+        while True:
+            line = self._proc.stdout.readline()
+            if not line:
+                raise RoomError(f"scry mcp exited during {method}")
+            resp = json.loads(line)
+            # Skip notifications (have "method" key or ID doesn't match)
+            if "method" in resp or resp.get("id") != self._next_id:
+                continue
+            if "error" in resp:
+                raise RoomError(f"{method}: {resp['error']}")
+            return resp["result"]
 
     def _tool(self, name: str, args: dict) -> dict | list:
         self._ensure()
