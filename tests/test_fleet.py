@@ -283,3 +283,73 @@ def test_status_lines_show_elapsed_and_hide_fake_spend(tmp_path, monkeypatch):
     assert "12m34s" in text
     assert "—" in text          # claude spend is not ours to report
     assert "$0.00" not in text
+
+
+def _make_fleet_dir(runs_root, name, days_old=0):
+    import os, time, json
+    d = runs_root.parent / "fleets" / name
+    (d / "runs" / "m0").mkdir(parents=True)
+    (d / "report.md").write_text(f"# fleet {name}\n")
+    (d / "runs" / "m0" / "state.json").write_text(json.dumps(
+        {"name": "m0", "status": "passed", "iters": [], "spent_usd": 0.0}))
+    if days_old:
+        # Age the whole tree: a real long-finished fleet has no recent file
+        # anywhere under it, and list_fleets takes the newest file's mtime.
+        old = time.time() - days_old * 86400
+        for p in sorted(d.rglob("*"), reverse=True):
+            os.utime(p, (old, old))
+        os.utime(d, (old, old))
+    return d
+
+
+def test_list_fleets_reports_name_age_and_path(tmp_path):
+    from setpoint.fleet import list_fleets
+    runs = tmp_path / "runs"
+    _make_fleet_dir(runs, "recent")
+    _make_fleet_dir(runs, "ancient", days_old=45)
+    got = {f["name"]: f for f in list_fleets(runs)}
+    assert set(got) == {"recent", "ancient"}
+    assert got["ancient"]["age_days"] >= 44
+    assert got["recent"]["age_days"] < 1
+    assert got["ancient"]["path"].name == "ancient"
+
+
+def test_remove_fleet_deletes_the_directory(tmp_path):
+    from setpoint.fleet import remove_fleet
+    runs = tmp_path / "runs"
+    d = _make_fleet_dir(runs, "gone")
+    assert remove_fleet("gone", runs) is True
+    assert not d.exists()
+
+
+def test_remove_fleet_is_false_for_unknown_name(tmp_path):
+    from setpoint.fleet import remove_fleet
+    assert remove_fleet("nope", tmp_path / "runs") is False
+
+
+def test_remove_fleet_refuses_path_traversal(tmp_path):
+    from setpoint.fleet import remove_fleet
+    runs = tmp_path / "runs"
+    (runs.parent / "fleets").mkdir(parents=True)
+    victim = tmp_path / "precious"
+    victim.mkdir()
+    for bad in ("../precious", "a/b", "/etc", ".."):
+        with pytest.raises(ValueError, match="fleet name"):
+            remove_fleet(bad, runs)
+    assert victim.exists()
+
+
+def test_prune_is_a_dry_run_unless_confirmed(tmp_path):
+    from setpoint.fleet import prune_fleets
+    runs = tmp_path / "runs"
+    old = _make_fleet_dir(runs, "ancient", days_old=45)
+    _make_fleet_dir(runs, "recent")
+
+    planned = prune_fleets(runs, older_than_days=30, confirm=False)
+    assert [f["name"] for f in planned] == ["ancient"]
+    assert old.exists()          # dry run removed nothing
+
+    removed = prune_fleets(runs, older_than_days=30, confirm=True)
+    assert [f["name"] for f in removed] == ["ancient"]
+    assert not old.exists()
+    assert (runs.parent / "fleets" / "recent").exists()

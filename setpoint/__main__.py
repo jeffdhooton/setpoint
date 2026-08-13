@@ -195,7 +195,8 @@ def cmd_fleet(rest: list[str]) -> int:
     from setpoint import fleet
     if not rest:
         print("fleet: usage: setpoint fleet {run <fleet.yaml> [--fresh] | status <fleet.yaml> | "
-              "stop | plan <idea.md> --repo <path> --engines a,b,c [--out DIR] [--checks CMD]}",
+              "stop | ls | rm <name>... | prune [--older-than DAYS] [--yes] | "
+              "plan <idea.md> --repo <path> --engines a,b,c [--out DIR] [--checks CMD]}",
               file=sys.stderr)
         return 1
     sub, args = rest[0], rest[1:]
@@ -255,6 +256,59 @@ def cmd_fleet(rest: list[str]) -> int:
         print(f"fleet bundle written to {fleet_path.parent}")
         print(f"review plan.md, then: setpoint fleet run {fleet_path}")
         return 0
+    if sub == "ls":
+        fleets = fleet.list_fleets(_runs_root())
+        if not fleets:
+            print("no fleets yet")
+            return 0
+        print(f"{'fleet':32} {'age':>9}  members")
+        for f in fleets:
+            age = (f"{f['age_days']:.0f}d" if f["age_days"] >= 1
+                   else f"{f['age_days'] * 24:.0f}h")
+            print(f"{f['name']:32} {age:>9}  {', '.join(f['members']) or '—'}")
+        return 0
+    if sub == "rm":
+        if not args:
+            print("fleet rm: usage: setpoint fleet rm <name> [<name>...]", file=sys.stderr)
+            return 1
+        rc = 0
+        for name in args:
+            try:
+                removed = fleet.remove_fleet(name, _runs_root())
+            except ValueError as e:
+                print(f"fleet rm: {e}", file=sys.stderr)
+                rc = 2
+                continue
+            if removed:
+                print(f"removed fleet {name}")
+            else:
+                print(f"fleet rm: no such fleet: {name}", file=sys.stderr)
+                rc = 1
+        return rc
+    if sub == "prune":
+        days = 30.0
+        if "--older-than" in args:
+            i = args.index("--older-than")
+            if i + 1 >= len(args):
+                print("fleet prune: --older-than requires a number of days", file=sys.stderr)
+                return 2
+            try:
+                days = float(args[i + 1])
+            except ValueError:
+                print(f"fleet prune: --older-than wants a number, got {args[i + 1]!r}",
+                      file=sys.stderr)
+                return 2
+        confirm = "--yes" in args
+        stale = fleet.prune_fleets(_runs_root(), older_than_days=days, confirm=confirm)
+        if not stale:
+            print(f"no fleets older than {days:g} days")
+            return 0
+        verb = "removed" if confirm else "would remove"
+        for f in stale:
+            print(f"{verb} {f['name']} ({f['age_days']:.0f}d old)")
+        if not confirm:
+            print(f"\ndry run — {len(stale)} fleet(s) match. Re-run with --yes to delete.")
+        return 0
     if not args:
         print(f"fleet {sub}: missing fleet.yaml", file=sys.stderr)
         return 1
@@ -279,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("setpoint — DISCOVER->PLAN->EXECUTE->VERIFY->ITERATE loop engine")
         print("usage: setpoint {run <spec.yaml> [--fresh] | resume <spec.yaml> | ls | "
-              "logs <name> | migrate <repo> [--dry-run] | fleet run|status|stop|plan}")
+              "logs <name> | migrate <repo> [--dry-run] | fleet run|status|stop|ls|rm|prune|plan}")
         return 0
 
     cmd, rest = argv[0], argv[1:]

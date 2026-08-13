@@ -3,8 +3,10 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import re
+import shutil
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -703,6 +705,67 @@ def _status_lines(fs, runs_root: Path) -> list[str]:
         else:
             lines.append(f"{name:30} {'pending':20} {0:>6} {'—':>9} {'—':>9}")
     return lines
+
+
+def _fleets_dir(runs_root: Path) -> Path:
+    """The directory holding every fleet's artifacts: ~/.setpoint/fleets."""
+    return runs_root.parent / "fleets"
+
+
+def list_fleets(runs_root: Path) -> list[dict]:
+    """Every fleet on disk, newest first: name, path, age in days, and the
+    member run counts. Fleet artifacts accumulate indefinitely — this is what
+    `fleet ls`, `fleet rm`, and `fleet prune` all read."""
+    root = _fleets_dir(runs_root)
+    if not root.is_dir():
+        return []
+    now = time.time()
+    out = []
+    for d in root.iterdir():
+        if not d.is_dir():
+            continue
+        # The newest artifact is the fleet's real age: the directory's own
+        # mtime moves whenever anything is written beneath it, but a
+        # long-finished fleet's files stay put.
+        stamps = [p.stat().st_mtime for p in d.rglob("*") if p.is_file()]
+        mtime = max(stamps or [d.stat().st_mtime])
+        runs = d / "runs"
+        members = sorted(p.name for p in runs.iterdir()) if runs.is_dir() else []
+        out.append({"name": d.name, "path": d, "age_days": (now - mtime) / 86400,
+                    "mtime": mtime, "members": members})
+    out.sort(key=lambda f: f["mtime"], reverse=True)
+    return out
+
+
+def remove_fleet(name: str, runs_root: Path) -> bool:
+    """Delete one fleet's artifacts and member run state. Returns False when
+    there is no such fleet. Raises ValueError for a name that is not a plain
+    directory name — this function deletes trees, so the name must never be
+    able to escape the fleets directory."""
+    if not name or "/" in name or "\\" in name or name in (".", "..") or Path(name).is_absolute():
+        raise ValueError(f"refusing to remove: {name!r} is not a plain fleet name")
+    target = _fleets_dir(runs_root) / name
+    if not target.is_dir():
+        return False
+    # Belt and braces: confirm the resolved path really sits inside the
+    # fleets directory before rmtree touches anything.
+    fleets = _fleets_dir(runs_root).resolve()
+    if not target.resolve().is_relative_to(fleets):
+        raise ValueError(f"refusing to remove: {name!r} resolves outside {fleets}")
+    shutil.rmtree(target)
+    return True
+
+
+def prune_fleets(runs_root: Path, older_than_days: float = 30,
+                 confirm: bool = False) -> list[dict]:
+    """Fleets older than `older_than_days`. Returns the list either way;
+    only deletes when `confirm` is True, so the default call is a dry run —
+    this removes run history, so the safe mode is the one you get for free."""
+    stale = [f for f in list_fleets(runs_root) if f["age_days"] >= older_than_days]
+    if confirm:
+        for f in stale:
+            remove_fleet(f["name"], runs_root)
+    return stale
 
 
 def fleet_status(fleet_path: str) -> str:
