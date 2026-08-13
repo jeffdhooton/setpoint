@@ -93,6 +93,10 @@ def test_codex_executor_falls_back_to_raw_text():
     assert captured["argv"][:2] == ["codex", "exec"]
     assert "--sandbox" in captured["argv"]
     assert "workspace-write" in captured["argv"]
+    # non-interactive runs have no one to answer approval prompts (including
+    # for MCP tool calls), so -a never must be set or codex auto-denies them
+    assert "-a" in captured["argv"]
+    assert "never" in captured["argv"]
     # never block reading stdin on an unattended run
     assert captured["stdin"] == subprocess.DEVNULL
 
