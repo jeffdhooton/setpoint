@@ -261,7 +261,7 @@ def cmd_fleet(rest: list[str]) -> int:
     if sub == "run":
         results = fleet.run_fleet(args[0], fresh=("--fresh" in args))
         print(fleet.fleet_status(args[0]))
-        return 0 if all(v == "passed" for v in results.values()) else 2
+        return 0 if all(v in fleet.FLEET_OK for v in results.values()) else 2
     if sub == "status":
         print(fleet.fleet_status(args[0]))
         return 0

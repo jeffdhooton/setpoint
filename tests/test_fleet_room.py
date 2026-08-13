@@ -13,6 +13,7 @@ class FakeRoom:
     def __init__(self):
         self.calls = []
         self.msgs = []
+        self.records = []
         self._n = 0
 
     def _id(self):
@@ -30,14 +31,17 @@ class FakeRoom:
 
     def post(self, room_id, from_, kind, body, task_id=""):
         self.msgs.append((kind, from_, body))
+        # `records` keeps the full message (task_id included) because the
+        # orchestrator threads verdicts by task_id; `msgs` stays a 3-tuple
+        # for the assertions that only care about kind/from/body.
+        self.records.append({"seq": len(self.msgs), "kind": kind, "from": from_,
+                             "body": body, "task_id": task_id})
         return {"seq": len(self.msgs)}
 
     def read(self, room_id, cursor=0, limit=50):
         if cursor:
             return {"messages": [], "cursor": cursor}
-        out = [{"seq": i + 1, "kind": k, "from": f, "body": b, "task_id": ""}
-               for i, (k, f, b) in enumerate(self.msgs)]
-        return {"messages": out, "cursor": len(out)}
+        return {"messages": list(self.records), "cursor": len(self.records)}
 
     def update_task_status(self, room_id, task_id, status):
         self.calls.append(("task_update", task_id, status))
@@ -78,6 +82,24 @@ def _write_bundle(tmp_path: Path) -> Path:
     return fleet
 
 
+
+def _approving_oneshot(room):
+    """A reviewer one-shot that behaves like a real one: it posts its verdict
+    into the room thread (which is where the orchestrator reads it from),
+    rather than returning it on stdout."""
+    import re
+
+    def oneshot(engine, prompt, cwd=None):
+        task_id = re.search(r"for task (\S+)", prompt)
+        reviewer = re.search(r'from "([^"]+)"', prompt)
+        if task_id and reviewer:
+            room.post("room1", reviewer.group(1), "review", "APPROVED — clean",
+                      task_id=task_id.group(1))
+        return "APPROVED"
+
+    return oneshot
+
+
 def test_room_mode_orchestration(tmp_path, monkeypatch):
     monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
     room = FakeRoom()
@@ -99,14 +121,17 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
         seen_goals[spec.name] = spec.goal
         return State()
 
+    approve = _approving_oneshot(room)
+
     def fake_oneshot(engine, prompt, cwd=None):
         reviews.append((engine, prompt, cwd))
-        return "APPROVED"
+        return approve(engine, prompt, cwd)
 
     results = run_fleet(str(_write_bundle(tmp_path)), run_loop=fake_run_loop,
                         room_client=room, oneshot=fake_oneshot)
 
-    assert results == {"api": "passed", "ui": "passed"}
+    # A gate pass is not the fleet outcome — a resolved approving review is.
+    assert results == {"api": "review-approved", "ui": "review-approved"}
     # room lifecycle
     assert room.calls[0] == ("create", "demo", str(tmp_path))
     assert ("task", "API", ()) in room.calls
@@ -323,9 +348,10 @@ def test_decompose_bundle_runs_room_mode(tmp_path, monkeypatch):
 
     room = FakeRoom()
     results = run_fleet(str(fleet_path), run_loop=fake_run_loop, room_client=room,
-                        oneshot=lambda e, p, cwd=None: "APPROVED")
+                        oneshot=_approving_oneshot(room))
 
-    assert results == {"build-api": "passed", "build-worker": "passed"}
+    assert results == {"build-api": "review-approved",
+                       "build-worker": "review-approved"}
     assert set(seen_specs) == {"build-api", "build-worker"}
 
     # Critical 3: deliver must be truthy on every member spec, or run_loop's
@@ -416,7 +442,7 @@ def test_closing_ceremony_declares_outcome(tmp_path, monkeypatch):
 
     room = LingeringRoom()
     run_fleet(str(_write_bundle(tmp_path)), run_loop=run_loop,
-              room_client=room, oneshot=lambda e, p, cwd=None: "APPROVED")
+              room_client=room, oneshot=_approving_oneshot(room))
 
     updates = [c for c in room.calls if c[0] == "task_update"]
     finals = {c[2] for c in updates}
@@ -429,3 +455,103 @@ def test_closing_ceremony_declares_outcome(tmp_path, monkeypatch):
 
     report = (tmp_path / "fleets" / "demo" / "report.md").read_text()
     assert "## Outcome" in report and "Needs a human" in report
+
+
+def _passing_run_loop(spec, *, fresh=False, ui=None, abort_check=None, runs_root=None):
+    from types import SimpleNamespace
+    return SimpleNamespace(status="passed")
+
+
+def _write_single_engine_bundle(tmp_path: Path) -> Path:
+    """Same shape as _write_bundle but both members run claude."""
+    for name in ("api", "ui"):
+        (tmp_path / f"{name}.setpoint.yaml").write_text(yaml.safe_dump({
+            "name": name, "type": "coding", "goal": f"do {name}",
+            "workspace": {"repo": str(tmp_path), "worktree": False},
+            "execute": {"engine": "claude"},
+            "verify": {"gate": "command", "command": "true"},
+            "deliver": {},
+        }, sort_keys=False))
+    fleet = tmp_path / "fleet.yaml"
+    fleet.write_text(yaml.safe_dump({
+        "name": "solo", "concurrency": 2,
+        "members": ["./api.setpoint.yaml", "./ui.setpoint.yaml"],
+        "room": {"repo": str(tmp_path),
+                 "tasks": [{"member": "api", "title": "API", "depends_on": []},
+                           {"member": "ui", "title": "UI", "depends_on": []}]},
+    }, sort_keys=False))
+    return fleet
+
+
+def test_review_verdict_reads_the_structured_field_first():
+    from setpoint.fleet import review_verdict
+    msgs = [{"kind": "review", "task_id": "t1", "from": "codex-reviewer",
+             "verdict": "CHANGES", "body": "APPROVED in prose, changes in truth"}]
+    assert review_verdict(msgs, "t1", "codex-reviewer") == "changes"
+
+
+def test_review_verdict_falls_back_to_prose():
+    from setpoint.fleet import review_verdict
+    msgs = [{"kind": "review", "task_id": "t1", "from": "codex-reviewer",
+             "body": "CHANGES — the DTO leaks a FIN field"},
+            {"kind": "review", "task_id": "t1", "from": "codex-reviewer",
+             "body": "APPROVED — fixed in 2f9a1c"}]
+    assert review_verdict(msgs, "t1", "codex-reviewer") == "approved"  # last wins
+
+
+def test_review_verdict_ignores_other_tasks_and_other_authors():
+    from setpoint.fleet import review_verdict
+    msgs = [{"kind": "review", "task_id": "t2", "from": "codex-reviewer",
+             "body": "APPROVED"},
+            {"kind": "review", "task_id": "t1", "from": "claude-worker",
+             "body": "APPROVED (self-approval)"}]
+    assert review_verdict(msgs, "t1", "codex-reviewer") == "none"
+
+
+def test_gate_pass_with_changes_requested_is_not_a_fleet_success(tmp_path):
+    from setpoint.fleet import run_fleet
+
+    class ReviewingRoom(FakeRoom):
+        def read(self, room_id, cursor=0, limit=50):
+            base = super().read(room_id, cursor=cursor, limit=limit)
+            if cursor:
+                return base
+            base["messages"].append(
+                {"seq": 99, "kind": "review", "from": "codex-reviewer",
+                 "task_id": "t1", "body": "CHANGES — missing RBAC coverage"})
+            return base
+
+    results = run_fleet(str(_write_bundle(tmp_path)),
+                        run_loop=_passing_run_loop, room_client=ReviewingRoom(),
+                        oneshot=lambda engine, prompt, cwd=None: "reviewed")
+    assert results["api"] == "changes-requested"
+
+
+def test_approved_review_is_the_fleet_success_status(tmp_path):
+    from setpoint.fleet import run_fleet
+
+    class ApprovingRoom(FakeRoom):
+        def read(self, room_id, cursor=0, limit=50):
+            base = super().read(room_id, cursor=cursor, limit=limit)
+            if cursor:
+                return base
+            for tid, reviewer in (("t1", "codex-reviewer"), ("t2", "claude-reviewer")):
+                base["messages"].append(
+                    {"seq": 99, "kind": "review", "from": reviewer,
+                     "task_id": tid, "verdict": "APPROVED", "body": "APPROVED — clean"})
+            return base
+
+    results = run_fleet(str(_write_bundle(tmp_path)),
+                        run_loop=_passing_run_loop, room_client=ApprovingRoom(),
+                        oneshot=lambda engine, prompt, cwd=None: "reviewed")
+    assert set(results.values()) == {"review-approved"}
+
+
+def test_single_engine_fleet_marks_members_unreviewed(tmp_path):
+    from setpoint.fleet import run_fleet
+    room = FakeRoom()
+    results = run_fleet(str(_write_single_engine_bundle(tmp_path)),
+                        run_loop=_passing_run_loop, room_client=room,
+                        oneshot=lambda engine, prompt, cwd=None: "")
+    assert set(results.values()) == {"unreviewed"}
+    assert any("single-engine" in b for _, _, b in room.msgs)

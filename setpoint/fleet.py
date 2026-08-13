@@ -32,6 +32,49 @@ review message whose body starts with APPROVED or CHANGES followed by a
 one-line justification."""
 
 
+# A member's loop passing its gate is NOT the fleet's success condition: in
+# the first production fleet a member was declared passed while its reviewer
+# was mid-CHANGES on real findings. These are the fleet-level outcomes.
+REVIEW_APPROVED = "review-approved"
+CHANGES_REQUESTED = "changes-requested"
+UNREVIEWED = "unreviewed"          # gate passed, no reviewer could run
+GATE_PASSED = "gate-passed"        # gate passed, review outcome unknown
+# `setpoint fleet run` exits 0 only for these. `unreviewed` is included
+# because a single-engine fleet cannot review by construction — but it is
+# always listed in "Needs a human" so it is never silently accepted. Bare
+# "passed" only ever reaches here from a fleet with no `room:` section, which
+# has no cross-review concept at all; in room mode every gate pass is mapped
+# to one of the review-aware statuses above.
+FLEET_OK = frozenset({REVIEW_APPROVED, UNREVIEWED, "completed-capped", "passed"})
+
+_APPROVED_RE = re.compile(r"^\s*APPROVED\b", re.IGNORECASE)
+_CHANGES_RE = re.compile(r"^\s*CHANGES\b", re.IGNORECASE)
+
+
+def review_verdict(messages: list[dict], task_id: str, reviewer: str) -> str:
+    """The reviewer's final verdict on a task: "approved", "changes", or
+    "none" when that reviewer never rendered one. Prefers a structured
+    `verdict` field (scry room domain) and falls back to the prose convention
+    the review prompt asks for. Later messages win — a reviewer that posts
+    CHANGES then APPROVED has resolved the thread."""
+    verdict = "none"
+    for m in messages:
+        if m.get("kind") != "review" or m.get("task_id") != task_id:
+            continue
+        if m.get("from") != reviewer:
+            continue  # never let a worker approve its own task
+        structured = (m.get("verdict") or "").strip().upper()
+        if structured in ("APPROVED", "CHANGES"):
+            verdict = "approved" if structured == "APPROVED" else "changes"
+            continue
+        body = m.get("body") or ""
+        if _APPROVED_RE.match(body):
+            verdict = "approved"
+        elif _CHANGES_RE.match(body):
+            verdict = "changes"
+    return verdict
+
+
 def stop_sentinel_path() -> Path:
     return _runs_root().parent / "STOP"
 
@@ -105,16 +148,24 @@ def _run_member(member_path: Path, fresh: bool, run_loop, *,
 
     if room_ctx is not None and room is not None:
         try:
-            _report_member_to_room(spec.name, status, room_ctx, room, oneshot, room_lock)
+            status = _report_member_to_room(spec.name, status, room_ctx, room,
+                                            oneshot, room_lock)
         except Exception:
             print(f"setpoint fleet: room reporting for {spec.name} failed:\n{traceback.format_exc()}",
                   file=sys.stderr)
+            # In room mode a bare "passed" must never escape as a fleet-level
+            # success: the review never resolved, so say exactly that.
+            if status == "passed":
+                status = GATE_PASSED
 
     return spec.name, status
 
 
 def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, oneshot,
-                           room_lock: threading.Lock | None) -> None:
+                           room_lock: threading.Lock | None) -> str:
+    """Post the member's outcome, run cross-review when possible, and return
+    the FLEET-level status — which is not the loop's status. Anything that did
+    not pass its gate is returned unchanged."""
     room_id = room_ctx["room_id"]
     task_id = room_ctx["task_id"]
 
@@ -126,18 +177,21 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
             room.post(room_id, "orchestrator", kind, body, task_id=task_id)
 
     _post("status", f"{member_name}: {status}")
-    if status != "passed":
-        return
+    if status not in ("passed", "completed-capped"):
+        return status
 
     engine = room_ctx["engine"]
     reviewer_engine = next((e for e in room_ctx.get("fleet_engines", []) if e != engine), None)
     if reviewer_engine is None:
-        _post("status", f"{member_name}: skipping cross-review — fleet is single-engine")
-        return
+        _post("status", f"{member_name}: UNREVIEWED — fleet is single-engine, so no "
+                        f"cross-review is possible (maker == checker). A human must "
+                        f"review this member's diff.")
+        return UNREVIEWED
 
+    reviewer = f"{reviewer_engine}-reviewer"
     prompt = REVIEW_PROMPT.format(task_id=task_id, room_id=room_id,
                                   branch=room_ctx["branch"], repo=room_ctx["repo"],
-                                  reviewer=f"{reviewer_engine}-reviewer")
+                                  reviewer=reviewer)
     # cwd=repo: the review targets that repo (git diff, reading the branch),
     # and codex's sandbox / claude's trust context are scoped to the process
     # cwd -- running the one-shot from the orchestrator's own cwd would point
@@ -151,6 +205,32 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
     if not (result_text or "").strip():
         _post("status", f"review of {member_name} by {reviewer_engine} "
                         f"produced no output/failed")
+
+    # The verdict lives in the room, not in the one-shot's stdout: the
+    # reviewer posts its findings as messages, and the last one it authored on
+    # this thread is the verdict that counts.
+    try:
+        if room_lock is not None:
+            with room_lock:
+                msgs = room.read(room_id, cursor=0, limit=1000).get("messages") or []
+        else:
+            msgs = room.read(room_id, cursor=0, limit=1000).get("messages") or []
+    except Exception:
+        print(f"setpoint fleet: could not read the channel for {member_name}'s "
+              f"verdict:\n{traceback.format_exc()}", file=sys.stderr)
+        msgs = []
+
+    verdict = review_verdict(msgs, task_id, reviewer)
+    if verdict == "approved":
+        _post("status", f"{member_name}: review approved by {reviewer}")
+        return REVIEW_APPROVED
+    if verdict == "changes":
+        _post("status", f"{member_name}: CHANGES requested by {reviewer} — "
+                        f"gate passed but the review did not resolve")
+        return CHANGES_REQUESTED
+    _post("status", f"{member_name}: no verdict from {reviewer} — recording "
+                    f"gate-passed, review unresolved")
+    return GATE_PASSED
 
 
 def _order_tasks_by_dependency(tasks: list[dict]) -> list[int]:
@@ -496,7 +576,7 @@ def _close_the_loop(fs, room, room_id, results):
             continue
         member = next((m for m in results
                        if (t.get("claimed_by") or "").endswith(m)), None)
-        final = "done" if results.get(member) == "passed" else "abandoned"
+        final = "done" if results.get(member) in FLEET_OK else "abandoned"
         try:
             room.post(room_id, "orchestrator", "status",
                       f"reconciling board: task '{t.get('title', t['id'])}' left "
@@ -516,11 +596,23 @@ def _close_the_loop(fs, room, room_id, results):
         if final == "abandoned":
             needs_human.append(f"abandoned task needs a decision or a next wave: {title}")
     for member, st in sorted(results.items()):
-        if st != "passed":
+        if st == UNREVIEWED:
+            needs_human.append(f"member '{member}' passed its gate but was never "
+                               f"cross-reviewed — review the diff yourself")
+        elif st == CHANGES_REQUESTED:
+            needs_human.append(f"member '{member}' has unresolved review findings — "
+                               f"read the review thread before merging")
+        elif st == GATE_PASSED:
+            needs_human.append(f"member '{member}' passed its gate but its reviewer "
+                               f"never rendered a verdict — the review is unresolved")
+        elif st == "completed-capped":
+            needs_human.append(f"member '{member}' verified its own deliverable but the "
+                               f"repo-wide gate is red — confirm the red is pre-existing")
+        elif st not in FLEET_OK:
             needs_human.append(f"member '{member}' ended '{st}' — read its run log "
                                f"and the transcript before trusting or discarding its work")
     if not needs_human:
-        needs_human.append("nothing — all members passed and delivered")
+        needs_human.append("nothing — every member was reviewed, approved and delivered")
 
     body = ("FLEET CLOSED — " + fs.name + "\n\n"
             + "Member outcomes:\n"
