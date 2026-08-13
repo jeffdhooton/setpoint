@@ -11,6 +11,7 @@ class FleetSpec:
     name: str
     members: list[Path] = field(default_factory=list)
     concurrency: int = 4
+    room: dict | None = None
 
 
 def load_fleet(path: str) -> FleetSpec:
@@ -29,8 +30,15 @@ def load_fleet(path: str) -> FleetSpec:
     c = int(c)
     if c < 1:
         raise ValueError("fleet concurrency must be >= 1")
+    room = raw.get("room")
+    if room:
+        if not room.get("repo") or not room.get("tasks"):
+            raise ValueError("fleet room section requires repo and tasks")
+    else:
+        room = None
     return FleetSpec(
         name=raw["name"],
         members=members,
         concurrency=c,
+        room=room,
     )
