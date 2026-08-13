@@ -99,13 +99,24 @@ def deliver(spec, cwd: Path, state, runner=subprocess.run, report_dir: Path | No
         _run(runner, ["git", "push", "-u", "origin", branch], cwd)
         actions.append("push")
     if d.get("pr", True):
-        body = (f"Autonomous setpoint run for {spec.name}.\n\n"
-                 f"Goal: {spec.goal}\n\nVerifier + grader passed. Review before merge.")
-        proc = _run(runner, ["gh", "pr", "create", "--base", base,
-                             "--head", branch, "--title", f"{spec.name}: {spec.goal[:60]}",
-                             "--body", body], cwd)
-        pr_url = (proc.stdout or "").strip() or None
-        actions.append("pr")
+        # A room worker may already have opened the PR for this branch (the
+        # room protocol asks it to request review, and older skill versions
+        # opened the PR too). Opening a second one for the same head is noise
+        # a human then has to close — adopt the existing one instead.
+        existing = _run(runner, ["gh", "pr", "list", "--head", branch,
+                                 "--state", "open", "--json", "url",
+                                 "--jq", ".[0].url"], cwd)
+        pr_url = (existing.stdout or "").strip() or None
+        if pr_url:
+            actions.append("pr (existing)")
+        else:
+            body = (f"Autonomous setpoint run for {spec.name}.\n\n"
+                     f"Goal: {spec.goal}\n\nVerifier + grader passed. Review before merge.")
+            proc = _run(runner, ["gh", "pr", "create", "--base", base,
+                                 "--head", branch, "--title", f"{spec.name}: {spec.goal[:60]}",
+                                 "--body", body], cwd)
+            pr_url = (proc.stdout or "").strip() or None
+            actions.append("pr")
     if d.get("sheet_task"):
         # Update the Google Sheet tracker via the `gog` CLI (the `status`
         # skill's wrapper around `gog sheets`). The concrete subcommand can be

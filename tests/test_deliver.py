@@ -162,3 +162,39 @@ def test_guards_refuse_real_deploy_and_merge_commands():
 
     with pytest.raises(ValueError):
         _check_no_merge(["gh", "pr", "merge", "42"])
+
+
+def test_deliver_adopts_an_existing_open_pr(tmp_path):
+    from setpoint.deliver import deliver
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["gh", "pr", "list"]:
+            return _FakeCompleted(0, "https://github.com/x/y/pull/7\n")
+        return _FakeCompleted(0, "")
+
+    spec = _spec({"push": True, "pr": True})
+    res = deliver(spec, tmp_path, _passed_state(), runner=fake_run)
+    assert res.pr_url == "https://github.com/x/y/pull/7"
+    assert "pr (existing)" in res.actions
+    flat = [" ".join(a) for a in calls]
+    assert not any(c.startswith("gh pr create") for c in flat)
+
+
+def test_deliver_creates_a_pr_when_none_exists(tmp_path):
+    from setpoint.deliver import deliver
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["gh", "pr", "list"]:
+            return _FakeCompleted(0, "\n")  # no open PR for this head
+        if argv[:3] == ["gh", "pr", "create"]:
+            return _FakeCompleted(0, "https://github.com/x/y/pull/8\n")
+        return _FakeCompleted(0, "")
+
+    spec = _spec({"push": True, "pr": True})
+    res = deliver(spec, tmp_path, _passed_state(), runner=fake_run)
+    assert res.pr_url == "https://github.com/x/y/pull/8"
+    assert "pr" in res.actions
