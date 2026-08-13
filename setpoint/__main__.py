@@ -41,7 +41,7 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
     from setpoint.workspace import prepare_workspace
     from setpoint.budget import Budget, PRICING
     from setpoint.memory import Memory
-    from setpoint.gates import build_gate
+    from setpoint.gates import build_gate, build_scoped_gate
     from setpoint.clients import make_judge_client
     from setpoint.ui import StreamUI
     from setpoint.cycle import Cycle
@@ -81,12 +81,14 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
             f"default port — a sibling worktree is running the same stack.")
 
     gate = build_gate(spec, judge_client=judge_client, env=gate_env)
+    scoped_gate = build_scoped_gate(spec, env=gate_env)
     executor = _build_executor(spec)
     plan_client = _build_plan_client(spec)
 
     try:
         cycle = Cycle(spec, executor, gate, memory, budget, ui, plan_client,
-                      abort_check=abort_check, lesson_store=lesson_store)
+                      abort_check=abort_check, lesson_store=lesson_store,
+                      scoped_gate=scoped_gate)
         state = cycle.run(cwd=cwd)
 
         # Lesson promotion, scry export, and retro tuning are best-effort

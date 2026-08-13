@@ -676,3 +676,60 @@ def test_anchor_mention_avoids_reprompt(tmp_path):
           Memory("t", root=tmp_path / "r"), Budget(10.0, None, PRICING),
           StubUI(), client, lesson_store=store).run(cwd=tmp_path)
     assert len(_plan_calls(client)) == 1
+
+
+class ScriptedGate:
+    """Gate returning a canned pass/fail sequence, one entry per verify()."""
+    supports_preflight = False
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = 0
+
+    def verify(self, cwd, on_event):
+        self.calls += 1
+        passed = self.results[min(self.calls - 1, len(self.results) - 1)]
+        return GateResult(passed=passed,
+                          feedback="ok" if passed else "broad gate red")
+
+
+def _scoped_cycle(spec, tmp_path, gate, scoped_gate):
+    return Cycle(spec, FakeExecutor(), gate,
+                 Memory("t", root=tmp_path / "runs"),
+                 Budget(10.0, None, PRICING), StubUI(), _plan_client(),
+                 scoped_gate=scoped_gate)
+
+
+def test_scoped_pass_with_broad_fail_ends_completed_capped(tmp_path):
+    spec = _spec(tmp_path, max_iters=6)
+    scoped = ScriptedGate([True])        # the worker's own deliverable verifies
+    broad = ScriptedGate([False])        # repo-wide gate is red regardless
+    state = _scoped_cycle(spec, tmp_path, broad, scoped).run(cwd=tmp_path)
+    assert state.status == "completed-capped"
+    # It must stop at once, not burn the remaining iterations.
+    assert broad.calls == 1
+    assert len(state.iters) == 1
+
+
+def test_scoped_and_broad_both_pass_is_plain_passed(tmp_path):
+    spec = _spec(tmp_path, max_iters=6)
+    state = _scoped_cycle(spec, tmp_path, ScriptedGate([True]),
+                          ScriptedGate([True])).run(cwd=tmp_path)
+    assert state.status == "passed"
+
+
+def test_scoped_fail_keeps_iterating_and_never_runs_the_broad_gate(tmp_path):
+    spec = _spec(tmp_path, max_iters=2)
+    scoped, broad = ScriptedGate([False, False]), ScriptedGate([False])
+    state = _scoped_cycle(spec, tmp_path, broad, scoped).run(cwd=tmp_path)
+    assert state.status == "stopped"
+    assert scoped.calls == 2   # the scoped gate is what drives iteration
+    assert broad.calls == 0    # never consulted while the scope is still red
+
+
+def test_no_scoped_gate_keeps_the_original_behavior(tmp_path):
+    spec = _spec(tmp_path, max_iters=6)
+    broad = ScriptedGate([False, True])
+    state = _scoped_cycle(spec, tmp_path, broad, None).run(cwd=tmp_path)
+    assert state.status == "passed"
+    assert broad.calls == 2

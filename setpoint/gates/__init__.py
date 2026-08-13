@@ -24,6 +24,18 @@ class Gate(abc.ABC):
         ...
 
 
+def build_scoped_gate(spec, env=None) -> Gate | None:
+    """The task-scoped gate, or None when the spec declares no scope. Always
+    a CommandGate: a scoped gate exists to be cheap and deterministic."""
+    from .command import CommandGate
+
+    if not getattr(spec.verify, "scoped_command", None):
+        return None
+    return CommandGate(command=spec.verify.scoped_command,
+                       timeout=getattr(spec.verify, "timeout_secs", 600),
+                       env=env)
+
+
 def build_gate(spec, judge_client=None, env=None) -> Gate:
     from .command import CommandGate
     from .judge import JudgeGate

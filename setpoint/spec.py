@@ -51,6 +51,10 @@ class VerifyCfg:
     checks: list[dict] = field(default_factory=list)
     timeout_secs: int = 600
     preflight: bool = True
+    # Task-scoped gate. When set, it is the gate that drives iteration; the
+    # broad `command` gate then only decides between "passed" and
+    # "completed-capped". Optional: without it behavior is exactly as before.
+    scoped_command: str | None = None
 
 
 @dataclass
@@ -157,6 +161,7 @@ def load_spec(path: str) -> LoopSpec:
         checks=list(v_raw.get("checks") or []),
         timeout_secs=int(v_raw.get("timeout_secs", 600)),
         preflight=bool(v_raw.get("preflight", True)),
+        scoped_command=v_raw.get("scoped_command"),
     )
     if gate == "command" and not verify.command:
         raise ValueError("command gate requires verify.command")

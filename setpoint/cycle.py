@@ -5,6 +5,7 @@ from pathlib import Path
 
 from setpoint.analyze import analyze, is_repeat
 from setpoint.budget import Budget, Usage
+from setpoint.gates import GateResult
 from setpoint.lessons import anchored_files, render_lesson
 from setpoint.memory import IterRecord, Memory, RunState
 from setpoint.retry import with_retries
@@ -66,10 +67,14 @@ def _plan_problems(plan: str, lessons: list[tuple[str, str, list[str]]]) -> str:
 
 class Cycle:
     def __init__(self, spec, executor, gate, memory: Memory, budget: Budget, ui,
-                 plan_client, abort_check=None, lesson_store=None):
+                 plan_client, abort_check=None, lesson_store=None,
+                 scoped_gate=None):
         self.spec = spec
         self.executor = executor
         self.gate = gate
+        # When set, the scoped gate drives iteration and `gate` is consulted
+        # only once the scope is green -- see the VERIFY block in run().
+        self.scoped_gate = scoped_gate
         self.memory = memory
         self.budget = budget
         self.ui = ui
@@ -224,9 +229,25 @@ class Cycle:
             )
             self.budget.add(self.spec.execute.model, result.usage)
 
-            # VERIFY
+            # VERIFY. With a scoped gate configured, the scoped gate decides
+            # whether the worker's own deliverable is done; the broad gate is
+            # consulted only once the scoped gate is green, to separate
+            # "passed" from "completed-capped".
             self.ui.stage("VERIFY", i, self.spec.stop.max_iters)
-            gate_result = self.gate.verify(cwd=cwd, on_event=lambda e: None)
+            capped = False
+            if self.scoped_gate is not None:
+                gate_result = self.scoped_gate.verify(cwd=cwd, on_event=lambda e: None)
+                if gate_result.passed:
+                    broad = self.gate.verify(cwd=cwd, on_event=lambda e: None)
+                    if not broad.passed:
+                        capped = True
+                        gate_result = GateResult(
+                            passed=True,
+                            feedback="scoped gate passed; repo-wide gate still red "
+                                     f"(not attributable to this task):\n{broad.feedback}",
+                            score=gate_result.score)
+            else:
+                gate_result = self.gate.verify(cwd=cwd, on_event=lambda e: None)
             self.ui.verify(gate_result)
 
             lesson = None
@@ -258,7 +279,11 @@ class Cycle:
 
             # ITERATE
             if gate_result.passed:
-                self.memory.set_status("passed")
+                # completed-capped: the deliverable is verified but the broad
+                # gate is red for reasons outside this task. A distinct
+                # terminal status so the fleet stops reporting verified work
+                # as a failure -- and stops burning iterations on it.
+                self.memory.set_status("completed-capped" if capped else "passed")
                 last = rec
                 break
 

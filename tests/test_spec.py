@@ -407,3 +407,18 @@ def test_workspace_prepare_loads_and_defaults_to_none(tmp_path):
         "verify": {"gate": "command", "command": "true"},
     }))
     assert load_spec(str(p2)).workspace.prepare is None
+
+
+def test_verify_scoped_command_loads(tmp_path):
+    from setpoint.spec import load_spec
+    import yaml
+    p = tmp_path / "s.setpoint.yaml"
+    p.write_text(yaml.safe_dump({
+        "name": "n", "type": "coding", "goal": "g",
+        "workspace": {"repo": str(tmp_path)},
+        "verify": {"gate": "command", "command": "pnpm bar",
+                   "scoped_command": "pnpm test admissions"},
+    }))
+    spec = load_spec(str(p))
+    assert spec.verify.scoped_command == "pnpm test admissions"
+    assert spec.verify.command == "pnpm bar"
