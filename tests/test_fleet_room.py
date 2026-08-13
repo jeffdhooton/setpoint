@@ -78,6 +78,7 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
     monkeypatch.setenv("SETPOINT_RUNS_ROOT", str(tmp_path / "runs"))
     room = FakeRoom()
     seen_notes = {}
+    seen_goals = {}
     reviews = []
 
     class State:
@@ -87,6 +88,11 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
         # context.notes is a str (spec.py:26) -- Cycle._discover joins it as
         # a scalar, so a room-mode member must still see a plain string here.
         seen_notes[spec.name] = spec.context.notes
+        # spec.goal must also carry the room block: agent engines (claude/
+        # codex/kimi) never consult DISCOVER's notes -- their plan client is
+        # the no-op AgentPlanClient, so the executor prompt is built from
+        # spec.goal alone.
+        seen_goals[spec.name] = spec.goal
         return State()
 
     def fake_oneshot(engine, prompt, cwd=None):
@@ -109,6 +115,10 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
     assert isinstance(api_notes, str)
     assert "room_id: room1" in api_notes and "task_id: t1" in api_notes
     assert "agent: claude-api" in api_notes
+    api_goal = seen_goals["api"]
+    assert isinstance(api_goal, str)
+    assert "ROOM CONTEXT" in api_goal
+    assert "room_id: room1" in api_goal and "task_id: t1" in api_goal
     # cross-review dispatched with a different engine than the author, and
     # run with cwd=repo (codex's sandbox / claude's trust context are
     # cwd-scoped, so the review must run inside the repo it targets)
@@ -325,9 +335,14 @@ def test_decompose_bundle_runs_room_mode(tmp_path, monkeypatch):
     assert seen_specs["build-worker"].execute.engine == "kimi"
     assert seen_specs["build-worker"].execute.model == "kimi"
 
-    # Every member is room-coordinated: ROOM CONTEXT appended to notes.
+    # Every member is room-coordinated: ROOM CONTEXT appended to notes, and
+    # also to goal -- agent engines (claude/kimi here) only ever see the
+    # executor prompt built from spec.goal (their plan client is the no-op
+    # AgentPlanClient, so DISCOVER's notes never reach them).
     for spec in seen_specs.values():
         assert "ROOM CONTEXT" in spec.context.notes
+        assert "ROOM CONTEXT" in spec.goal
+        assert "room_id: room1" in spec.goal
 
     # Criticals 1 & 2, checked directly: _build_plan_client for a kimi spec
     # must return the no-op AgentPlanClient, not fall through to

@@ -84,6 +84,12 @@ def _run_member(member_path: Path, fresh: bool, run_loop, *,
                                              agent=room_ctx["agent"])
         spec.context.notes = (
             (spec.context.notes + "\n\n" if spec.context.notes else "") + block)
+        # notes only feeds Cycle._discover, which agent engines (claude/codex/
+        # kimi) never actually consult: their plan client is the no-op
+        # AgentPlanClient (agent_plan.py) returning fixed _PLAN_TEXT, so the
+        # executor prompt is built from spec.goal alone (cycle.py). Append the
+        # room block to goal too, or agent-engine workers never see it.
+        spec.goal = spec.goal + "\n\n" + block
 
     try:
         state = run_loop(spec, fresh=fresh, ui=NullUI(),
