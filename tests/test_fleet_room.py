@@ -376,3 +376,5 @@ def test_room_manifest_written(tmp_path, monkeypatch):
     assert manifest["run_id"] == "demo"
     assert set(manifest["members"]) == {"api", "ui"}
     assert manifest["members"]["api"].endswith("-api")
+    local = _json.loads((tmp_path / "room.json").read_text())
+    assert local == manifest

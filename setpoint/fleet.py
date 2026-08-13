@@ -363,13 +363,17 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
             # Self-describing fleet: write the room manifest next to
             # status.md/report.md so external tools (viewers, wave restarts)
             # can find the room without a room.get lookup.
-            out_dir = _fleet_out_dir(fs, _runs_root())
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "room.json").write_text(json.dumps({
+            manifest = json.dumps({
                 "room_id": room_id, "run_id": fs.name,
                 "repo": fs.room["repo"],
                 "members": {name: ctx["agent"] for name, ctx in member_room_ctx.items()},
-            }, indent=2) + "\n")
+            }, indent=2) + "\n"
+            out_dir = _fleet_out_dir(fs, _runs_root())
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "room.json").write_text(manifest)
+            # Bundle-local copy: the fleet dir is the project-side record of
+            # its own runs, so the manifest lives there too.
+            (Path(fleet_path).resolve().parent / "room.json").write_text(manifest)
 
         # ThreadPoolExecutor.submit() enqueues work immediately regardless of
         # worker availability -- it does not block until a slot is actually
