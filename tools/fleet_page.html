@@ -1,0 +1,351 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fleet office</title><style>
+:root{
+  --s0:#1a1a19; --s1:#232322; --s2:#2c2c2a; --line:#3a3a37;
+  --t0:#ffffff; --t1:#c3c2b7; --t2:#8a897f;
+  --contract:#d95926; --handoff:#3987e5; --review:#9085e9; --statusmsg:#6b6a63;
+  --good:#199e70; --warn:#c98500; --bad:#e66767;
+}
+*{box-sizing:border-box} html{color-scheme:dark}
+body{background:var(--s0);color:var(--t1);margin:0;
+  font:13.5px/1.6 "Berkeley Mono",ui-monospace,SFMono-Regular,monospace}
+header{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--s0) 88%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:14px 32px;
+  display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+header h1{font-size:14px;color:var(--t0);margin:0;font-weight:600;letter-spacing:.02em}
+.live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);
+  margin-right:8px;animation:blink 2s infinite}
+@keyframes blink{50%{opacity:.35}}
+.hcount{display:flex;align-items:baseline;gap:8px}
+.hcount .n{font-size:24px;font-weight:700;color:var(--t0);font-variant-numeric:tabular-nums}
+.hcount .k{font-size:11px;color:var(--t2)}
+.hero{display:flex;gap:26px;margin-left:auto}
+.hero .tile{text-align:right}
+.hero .v{font-size:16px;color:var(--t0);font-weight:600;font-variant-numeric:tabular-nums}
+.hero .k{font-size:10px;color:var(--t2);text-transform:uppercase;letter-spacing:.12em}
+main{max-width:1100px;margin:0 auto;padding:26px 32px 70px}
+h2{font-size:11px;color:var(--t2);text-transform:uppercase;letter-spacing:.14em;
+  margin:34px 0 14px;display:flex;align-items:baseline;gap:8px}
+h2 .n{color:var(--t2);font-weight:400}
+#err{color:var(--bad);padding:8px 32px}
+
+.tabdot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--line)}
+.tabdot.on{background:var(--good);animation:blink 2s infinite}
+.chip .proj{color:var(--t2);margin-left:6px;font-size:10px}
+/* ---- the office floor ---- */
+#floor{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.desk{background:var(--s1);border:1px solid var(--line);border-radius:14px;padding:16px;
+  display:flex;flex-direction:column;gap:10px;min-height:150px;
+  transition:border-color .4s}
+.desk.speaking{border-color:var(--t2)}
+.desk .who{display:flex;gap:12px;align-items:center}
+.avatar{width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--s2);color:var(--t0);font-weight:700;font-size:15px;
+  border:2.5px solid var(--line)}
+.avatar.working{border-color:var(--warn);animation:blink 1.9s infinite}
+.avatar.done{border-color:var(--good)}
+.avatar.trouble{border-color:var(--bad)}
+.desk .name{color:var(--t0);font-weight:600;font-size:13px;line-height:1.3;word-break:break-word}
+.desk .engine{font-size:10px;color:var(--t2);text-transform:uppercase;letter-spacing:.1em}
+.desk .doing{font-size:12px;color:var(--t1)}
+.desk .doing .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.bubble{position:relative;background:var(--s2);border-radius:11px;padding:9px 12px;
+  font-size:11.8px;color:var(--t1);line-height:1.5;
+  max-height:76px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 72%,transparent)}
+.bubble::before{content:"";position:absolute;top:-6px;left:20px;width:12px;height:12px;
+  background:var(--s2);transform:rotate(45deg);border-radius:2px}
+.bubble .when{color:var(--t2);font-size:10px}
+.bubble.fresh{background:#33332f}
+.desk .visitor-tag{font-size:11px;color:var(--review)}
+
+/* ---- conversations ---- */
+.convo{display:flex;align-items:baseline;gap:10px;background:var(--s1);border:1px solid var(--line);
+  border-radius:11px;padding:10px 16px;margin:7px 0;font-size:12.5px}
+.convo .dot{width:9px;height:9px;border-radius:50%;flex:none;align-self:center}
+.convo .live-tag{margin-left:auto;font-size:10.5px;color:var(--good);white-space:nowrap}
+.convo .idle-tag{margin-left:auto;font-size:10.5px;color:var(--t2);white-space:nowrap}
+.convo b{color:var(--t0);font-weight:600}
+
+/* ---- board ---- */
+.task{display:grid;grid-template-columns:118px 1fr;gap:4px 14px;align-items:start;
+  background:var(--s1);border:1px solid var(--line);border-radius:11px;padding:10px 16px;margin:7px 0}
+.task .title{color:var(--t0)} .task .meta{grid-column:2;color:var(--t2);font-size:11.5px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;
+  padding:2px 10px;border-radius:99px;border:1px solid}
+.pill.passed,.pill.done{color:var(--good);border-color:var(--good)}
+.pill.running,.pill.in_progress,.pill.claimed,.pill.review{color:var(--warn);border-color:var(--warn)}
+.pill.error,.pill.abandoned{color:var(--bad);border-color:var(--bad)}
+.pill.pending,.pill.open{color:var(--t2);border-color:var(--line)}
+
+/* ---- chat ---- */
+.filters{display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap}
+.chip{cursor:pointer;font-size:11.5px;padding:4px 12px;border-radius:99px;
+  border:1px solid var(--line);color:var(--t1);background:var(--s1)}
+.chip.on{color:var(--t0);border-color:var(--t2);background:var(--s2)}
+.chip .n{color:var(--t2);margin-left:5px}
+.chat-msg{display:grid;grid-template-columns:38px 1fr;gap:12px;margin:14px 0;animation:in .3s ease-out}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}
+.chat-msg .avatar{width:34px;height:34px;font-size:12px;border-width:2px;margin-top:2px}
+.chat-msg .head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.chat-msg .from{color:var(--t0);font-weight:600;font-size:12.5px}
+.chat-msg .tag{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  padding:1px 7px;border-radius:5px;border:1px solid}
+.tag.contract{color:var(--contract);border-color:var(--contract)}
+.tag.handoff{color:var(--handoff);border-color:var(--handoff)}
+.tag.review{color:var(--review);border-color:var(--review)}
+.tag.status{color:var(--t2);border-color:var(--line)}
+.chat-msg .when,.chat-msg .task-tag{color:var(--t2);font-size:10.5px}
+.chat-msg .body{background:var(--s1);border:1px solid var(--line);border-radius:3px 12px 12px 12px;
+  padding:9px 13px;margin-top:5px;white-space:pre-wrap;word-break:break-word;font-size:12.8px}
+.chat-msg .body.clamped{max-height:150px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(#000 72%,transparent)}
+.expand{cursor:pointer;color:var(--handoff);font-size:11.5px;margin-top:4px;display:inline-block}
+#follow{position:fixed;right:24px;bottom:24px;z-index:6}
+</style></head><body>
+<header>
+  <div><h1><span class="live"></span><span id="h-fleet">fleet</span></h1>
+    <div id="h-dir" style="font-size:10.5px;color:var(--t2);margin-top:2px"></div></div>
+  <div class="hcount"><span class="n" id="h-agents">–</span><span class="k">in the office</span></div>
+  <div class="hero">
+    <div class="tile"><div class="v" id="h-done">–</div><div class="k">tasks done</div></div>
+    <div class="tile"><div class="v" id="h-msgs">–</div><div class="k">messages</div></div>
+    <div class="tile"><div class="v" id="h-elapsed">–</div><div class="k">elapsed</div></div>
+  </div></header>
+<div id="switcher" style="border-bottom:1px solid var(--line);padding:9px 32px;
+  display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:var(--s1)">
+  <span style="font-size:10px;color:var(--t2);letter-spacing:.12em">FLEETS</span>
+  <div id="f-status" style="display:flex;gap:6px"></div>
+  <div id="f-project" style="display:flex;gap:6px"></div>
+  <div id="fleet-tabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+</div><div id="err"></div>
+<main>
+<div id="closed-banner" style="display:none;background:var(--s1);border:1px solid var(--good);
+  border-radius:14px;padding:18px 22px;margin:4px 0 10px">
+  <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--good)">■ FLEET CLOSED</div>
+  <pre id="closed-body" style="margin:10px 0 0;white-space:pre-wrap;font:12.5px/1.6 inherit;color:var(--t1)"></pre>
+</div>
+<h2>The office</h2><div id="floor"></div>
+<h2>Conversations <span class="n" id="convo-n"></span></h2><div id="convos"></div>
+<h2>Board</h2><div id="board"></div>
+<h2>Transcript</h2><div class="filters" id="filters"></div><div id="msgs"></div>
+</main>
+<button id="follow" class="chip">follow transcript</button>
+<script>
+const KINDS=["contract","handoff","review","status"];
+const KC={contract:"var(--contract)",handoff:"var(--handoff)",review:"var(--review)",status:"var(--statusmsg)"};
+const ICON={passed:"✓",done:"✓",running:"▶",in_progress:"▶",claimed:"◐",review:"⟳",
+  error:"✕",abandoned:"✕",pending:"○",open:"○"};
+let seen=new Set(), follow=false, filter="all", taskTitle={}, version=null;
+const el=id=>document.getElementById(id);
+el("follow").onclick=()=>{follow=!follow;el("follow").classList.toggle("on",follow);
+  if(follow) window.scrollTo({top:document.body.scrollHeight})};
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const fmtEl=s=>{const m=Math.floor(s/60);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`};
+const rel=t=>{const s=(Date.now()-Date.parse(t))/1000;
+  return s<60?"just now":s<3600?`${(s/60)|0}m ago`:`${(s/3600)|0}h ago`};
+const shortName=f=>f.replace(/^(claude|codex|kimi)-/,"");
+const engineOf=f=>f.startsWith("claude")?"claude":f.startsWith("codex")?"codex":f.startsWith("kimi")?"kimi":"?";
+const initials=f=>{const p=shortName(f).split(/[-_ ]+/).filter(Boolean);
+  return ((p[0]||"??")[0]+(p[1]?p[1][0]:(p[0]||" ?")[1]||"")).toUpperCase()};
+
+function model(s){
+  const now=Date.now();
+  const owners={}; s.board.forEach(t=>{if(t.claimed_by)owners[t.id]=t.claimed_by});
+  const people={};                       // id -> person
+  const memNames=Object.keys(s.members);
+  const agentForMember={};
+  s.board.forEach(t=>{if(t.claimed_by){const m=memNames.find(n=>t.claimed_by.endsWith(n));if(m)agentForMember[m]=t.claimed_by}});
+  memNames.forEach(m=>{
+    const id=agentForMember[m]||m;
+    people[id]={id,member:m,resident:true,engine:engineOf(id),last:0,lastMsg:null,
+      status:s.members[m].status,iters:s.members[m].iters,
+      task:s.board.find(t=>t.claimed_by===id)};
+  });
+  const pairs={};
+  s.messages.forEach(msg=>{
+    if(msg.from==="orchestrator")return;
+    const t=Date.parse(msg.created_at);
+    if(!people[msg.from]) people[msg.from]={id:msg.from,resident:false,engine:engineOf(msg.from),
+      last:0,lastMsg:null,status:"visiting",targets:{}};
+    const p=people[msg.from];
+    if(t>=p.last){p.last=t;p.lastMsg=msg}
+    const owner=owners[msg.task_id];
+    if(owner&&owner!==msg.from){
+      if(!p.resident){p.targets[owner]=Math.max(p.targets[owner]||0,t)}
+      const key=[msg.from,owner].sort().join("|")+"|"+msg.kind;
+      const e=pairs[key]||(pairs[key]={a:msg.from,b:owner,kind:msg.kind,n:0,last:0});
+      e.n++; e.last=Math.max(e.last,t);
+      if(t===e.last){e.lastFrom=msg.from}
+    }
+  });
+  Object.values(people).forEach(p=>{
+    if(!p.resident) p.status=(now-p.last<300e3)?"visiting":"left";
+  });
+  return {people:Object.values(people),pairs:Object.values(pairs).sort((a,b)=>b.last-a.last)};
+}
+
+function doing(p){
+  if(p.resident){
+    const ts=p.task?p.task.status:null;
+    if(p.status==="error")return['var(--bad)',"hit an error"];
+    if(ts==="review")return['var(--review)',"work submitted · in review"];
+    if(ts==="done"||p.status==="passed")return['var(--good)',"done for the day"];
+    if(p.status==="running")return['var(--warn)',`at work · iteration ${p.iters+1}`];
+    if(ts==="in_progress")return['var(--warn)',"at work"];
+    if(ts==="claimed")return['var(--warn)',"getting started"];
+    return['var(--line)',"waiting to start"];
+  }
+  if(p.status==="visiting"){
+    const target=Object.entries(p.targets).sort((a,b)=>b[1]-a[1])[0];
+    return ['var(--review)',target?`visiting · reviewing ${esc(shortName(target[0]))}`:"visiting"];
+  }
+  return ['var(--line)',"left the office"];
+}
+
+function avatarClass(p){
+  if(p.status==="running"||p.status==="visiting")return "working";
+  if(p.status==="passed"||p.status==="done")return "done";
+  if(p.status==="error")return "trouble";
+  return "";
+}
+
+function renderFloor(m,s){
+  const now=Date.now();
+  const order=m.people.sort((a,b)=>(b.resident-a.resident)||(b.last-a.last));
+  el("floor").innerHTML=order.filter(p=>p.status!=="left").map(p=>{
+    const [dotColor,text]=doing(p);
+    const fresh=p.lastMsg&&(now-Date.parse(p.lastMsg.created_at)<150e3);
+    const bubble=p.lastMsg?`<div class="bubble ${fresh?"fresh":""}">
+        <span class="when">${rel(p.lastMsg.created_at)} · ${p.lastMsg.kind}</span><br>${esc(p.lastMsg.body.slice(0,220))}</div>`:"";
+    return `<div class="desk ${fresh?"speaking":""}">
+      <div class="who"><div class="avatar ${avatarClass(p)}">${initials(p.id)}</div>
+        <div><div class="name">${esc(shortName(p.id))}</div>
+        <div class="engine">${p.engine}${p.resident?"":" · visitor"}</div></div></div>
+      <div class="doing"><span class="dot" style="background:${dotColor}"></span>${text}</div>
+      ${bubble}</div>`;
+  }).join("");
+  const active=m.people.filter(p=>p.status==="running"||p.status==="visiting"||
+    (p.resident&&p.task&&["in_progress","claimed","review"].includes(p.task.status))).length;
+  el("h-agents").textContent=active;
+}
+
+function renderConvos(m){
+  const now=Date.now();
+  const rows=m.pairs.filter(e=>e.kind!=="status").map(e=>{
+    const live=now-e.last<180e3;
+    const verb={contract:"negotiating an interface",handoff:"handing off work",
+      review:"reviewing"}[e.kind]||e.kind;
+    const dir=e.lastFrom===e.a?`<b>${esc(shortName(e.a))}</b> → <b>${esc(shortName(e.b))}</b>`
+                              :`<b>${esc(shortName(e.b))}</b> → <b>${esc(shortName(e.a))}</b>`;
+    return `<div class="convo"><span class="dot" style="background:${KC[e.kind]}"></span>
+      <span>${dir} · ${verb} <span style="color:var(--t2)">×${e.n}</span></span>
+      <span class="${live?"live-tag":"idle-tag"}">${live?"● talking now":rel(new Date(e.last).toISOString())}</span></div>`;
+  });
+  el("convo-n").textContent=rows.length?`· ${rows.length}`:"";
+  el("convos").innerHTML=rows.join("")||`<div class="convo" style="color:var(--t2)">quiet so far</div>`;
+}
+
+function pill(st){return `<span class="pill ${st}">${ICON[st]||"·"} ${st}</span>`}
+async function refresh(){
+  let s; try{ s=await (await fetch("/state.json?fleet="+encodeURIComponent(FLEET))).json() }catch(e){ el("err").textContent="bridge unreachable: "+e; return }
+  el("err").textContent=s.error||"";
+  if(version===null) version=s.version;
+  else if(s.version!==version) location.reload();
+  el("h-msgs").textContent=s.messages.length;
+  const t0=s.messages.length?Date.parse(s.messages[0].created_at)/1000:s.started;
+  el("h-elapsed").textContent=fmtEl(Date.now()/1000-t0);
+  el("h-done").textContent=`${s.board.filter(t=>t.status==="done").length}/${s.board.length}`;
+  if(s.outcome){el("closed-banner").style.display="block";
+    el("closed-body").textContent=s.outcome;
+    el("closed-banner").style.borderColor=/Needs a human:?\n- nothing/i.test(s.outcome)?"var(--good)":"var(--warn)";
+  } else el("closed-banner").style.display="none";
+  taskTitle={}; s.board.forEach(t=>taskTitle[t.id]=t.title);
+  const m=model(s);
+  renderFloor(m,s); renderConvos(m);
+  el("board").innerHTML=s.board.map(t=>{
+    const deps=(t.depends_on||[]).map(d=>taskTitle[d]||d.slice(0,8)).join(", ");
+    return `<div class="task"><span>${pill(t.status)}</span><span class="title">${esc(t.title)}</span>
+      <span class="meta">${t.claimed_by?esc(shortName(t.claimed_by)):"unclaimed"}${deps?" · needs: "+esc(deps):""}</span></div>`}).join("");
+  const counts={all:s.messages.length};
+  KINDS.forEach(k=>counts[k]=s.messages.filter(x=>x.kind===k).length);
+  el("filters").innerHTML=["all",...KINDS].map(k=>
+    `<span class="chip ${filter===k?"on":""}" data-k="${k}">${k}<span class="n">${counts[k]}</span></span>`).join("");
+  document.querySelectorAll(".filters .chip").forEach(c=>c.onclick=()=>{
+    filter=c.dataset.k;
+    document.querySelectorAll(".filters .chip").forEach(x=>x.classList.toggle("on",x===c));
+    applyFilter()});
+  const box=el("msgs");
+  for(const msg of s.messages){
+    if(seen.has(msg.seq)) continue;
+    seen.add(msg.seq);
+    const long=msg.body.length>600;
+    const div=document.createElement("div");
+    div.className="chat-msg"; div.dataset.kind=msg.kind;
+    div.innerHTML=`<div class="avatar">${msg.from==="orchestrator"?"⚙":initials(msg.from)}</div>
+      <div><div class="head"><span class="from">${esc(shortName(msg.from))}</span>
+      <span class="tag ${msg.kind}">${msg.kind}</span>
+      <span class="task-tag">${msg.task_id?esc(taskTitle[msg.task_id]||msg.task_id.slice(0,8)):""}</span>
+      <span class="when">#${msg.seq} · ${rel(msg.created_at)}</span></div>
+      <div class="body ${long?"clamped":""}">${esc(msg.body)}</div>
+      ${long?'<span class="expand">show all ▾</span>':""}</div>`;
+    if(long) div.querySelector(".expand").onclick=e=>{
+      div.querySelector(".body").classList.remove("clamped"); e.target.remove()};
+    box.appendChild(div);
+  }
+  applyFilter();
+  if(follow) window.scrollTo({top:document.body.scrollHeight});
+}
+function applyFilter(){document.querySelectorAll(".chat-msg").forEach(d=>
+  d.style.display=(filter==="all"||d.dataset.kind===filter)?"":"none")}
+const FLEET=new URLSearchParams(location.search).get("fleet")||"";
+let fStatus=localStorage.getItem("f-status")||"all";
+let fProject=localStorage.getItem("f-project")||"all";
+async function archive(names,want){
+  const qs=names.map(n=>"fleet="+encodeURIComponent(n)).join("&");
+  await fetch((want?"/archive?":"/unarchive?")+qs);
+  loadTabs();
+}
+async function archiveFinished(){
+  const r=await (await fetch("/archive?finished=1")).json();
+  if(!r.changed.length){alert("Nothing to clear — every fleet is still running.");return}
+  loadTabs();
+}
+async function loadTabs(){
+  const showArchived=fStatus==="archived";
+  const fl=await (await fetch("/fleets.json"+(showArchived?"?all=1":""))).json();
+  if(!FLEET&&fl.length){location.search="?fleet="+encodeURIComponent(fl[0].name);return}
+  const cur=fl.find(f=>f.name===FLEET);
+  el("h-fleet").textContent=FLEET||"fleet";
+  el("h-dir").textContent=cur?`${cur.project} · ${cur.repo}`:"";
+  const projects=[...new Set(fl.map(f=>f.project))];
+  el("f-status").innerHTML=
+    [["all","all"],["live","● in progress"],["done","finished"],["archived","archived"]].map(([k,label])=>
+      `<span class="chip ${fStatus===k?"on":""}" data-fs="${k}">${label}</span>`).join("")
+    +`<span class="chip" id="clear-done" title="Archive every fleet that is not running. Nothing is deleted — transcripts stay on disk.">clear finished</span>`;
+  el("f-project").innerHTML=projects.length>1?["all",...projects].map(pr=>
+    `<span class="chip ${fProject===pr?"on":""}" data-fp="${pr}">${pr}</span>`).join(""):"";
+  const show=fl.filter(f=>
+    (fStatus==="all"?!f.archived:
+     fStatus==="archived"?f.archived:
+     (fStatus==="live")===f.active&&!f.archived)&&
+    (fProject==="all"||f.project===fProject));
+  el("fleet-tabs").innerHTML=show.map(f=>
+    `<span class="chip ${f.name===FLEET?"on":""}" style="padding-right:6px">
+       <a href="?fleet=${encodeURIComponent(f.name)}" style="text-decoration:none;color:inherit">
+       <span class="tabdot ${f.active?"on":""}"></span>${f.name}
+       <span class="proj">${fProject==="all"&&projects.length>1?f.project+" · ":""}${f.passed}/${f.total}</span></a>
+       ${f.active?"":`<span class="arch" data-arch="${f.name}" data-want="${f.archived?0:1}"
+         title="${f.archived?"Restore to the list":"Archive — hide from this view, keep on disk"}"
+         style="margin-left:8px;opacity:.5;cursor:pointer">${f.archived?"↩":"×"}</span>`}</span>`).join("")
+    ||`<span style="font-size:11.5px;color:var(--t2)">no fleets match</span>`;
+  document.querySelectorAll("#f-status .chip[data-fs]").forEach(c=>c.onclick=()=>{
+    fStatus=c.dataset.fs;localStorage.setItem("f-status",fStatus);loadTabs()});
+  el("clear-done").onclick=archiveFinished;
+  document.querySelectorAll(".arch").forEach(c=>c.onclick=ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    archive([c.dataset.arch],c.dataset.want==="1")});
+  document.querySelectorAll("#f-project .chip").forEach(c=>c.onclick=()=>{
+    fProject=c.dataset.fp;localStorage.setItem("f-project",fProject);loadTabs()});
+}
+loadTabs(); setInterval(loadTabs,15000);
+refresh(); setInterval(refresh,3000);
+</script></body></html>
