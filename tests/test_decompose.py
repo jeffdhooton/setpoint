@@ -177,3 +177,35 @@ def test_decompose_without_repo_checks_keeps_the_task_command(tmp_path):
     member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
     assert member["verify"]["command"] == "pytest tests/api -q"
     assert "scoped_command" not in member["verify"]
+
+
+def test_detect_prepare_command_from_lockfile(tmp_path):
+    from setpoint.decompose import detect_prepare
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "vitest"}}))
+    (tmp_path / "package-lock.json").write_text("{}")
+    assert detect_prepare(tmp_path) == "npm ci"
+
+    (tmp_path / "package-lock.json").unlink()
+    (tmp_path / "pnpm-lock.yaml").write_text("")
+    assert detect_prepare(tmp_path) == "pnpm install --frozen-lockfile"
+
+
+def test_detect_prepare_returns_none_without_package_json(tmp_path):
+    from setpoint.decompose import detect_prepare
+    assert detect_prepare(tmp_path) is None
+
+
+def test_decompose_sets_prepare_on_every_member(tmp_path):
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(json.dumps({"scripts": {"ci": "x"}}))
+    (repo / "package-lock.json").write_text("{}")
+
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot)
+    member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
+    # A fresh worktree has no node_modules, so without this every gate exits
+    # 127 cold and the member dies at preflight.
+    assert member["workspace"]["prepare"] == "npm ci"

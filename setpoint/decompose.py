@@ -23,7 +23,10 @@ Rules:
 - Where two tasks share a boundary (API/schema/function), describe it in the
   producing task's "interfaces" field concretely enough to negotiate from.
 - Every task needs a deterministic verify_command that exits 0 on success,
-  runnable from the repo root.
+  runnable from the repo root. Make it the NARROWEST command that proves THIS
+  task's deliverable — ideally a single test file. Do NOT include the repo's
+  full test/build/lint command: that is run separately as a second, broader
+  gate, and duplicating it here makes every iteration pay for the whole suite.
 - Assign each task an engine from this list, spreading work across them: {engines}
 - Task names are kebab-case slugs, unique.
 
@@ -87,6 +90,25 @@ def detect_repo_checks(repo: Path) -> str | None:
     return f"npm run {name}"
 
 
+def detect_prepare(repo: Path) -> str | None:
+    """The command that makes a *fresh worktree* buildable, or None.
+
+    Every member runs in a brand-new worktree, which has no `node_modules`.
+    Without this the first gate exits 127 ("vitest: not found") and the member
+    dies at preflight before writing a line — the cold-start failure the fleet
+    retro named. Prefer the frozen-lockfile install so a member can never
+    silently drift its dependency tree."""
+    if not (Path(repo) / "package.json").exists():
+        return None
+    if (Path(repo) / "pnpm-lock.yaml").exists():
+        return "pnpm install --frozen-lockfile"
+    if (Path(repo) / "yarn.lock").exists():
+        return "yarn install --frozen-lockfile"
+    if (Path(repo) / "package-lock.json").exists():
+        return "npm ci"
+    return "npm install"
+
+
 def _extract_json(text: str) -> dict:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
@@ -122,7 +144,8 @@ def _validate(tasks: list[dict], engines: list[str]) -> None:
                 raise ValueError(f"task {t['name']!r} depends on unknown {dep!r}")
 
 
-def _member_spec(t: dict, repo: str, repo_checks: str | None = None) -> dict:
+def _member_spec(t: dict, repo: str, repo_checks: str | None = None,
+                 prepare: str | None = None) -> dict:
     # With repo checks known, the task's own command becomes the scoped gate
     # (what this worker is responsible for) and the repo's check becomes the
     # broad gate (what the repo requires). Cycle then distinguishes "passed"
@@ -136,7 +159,8 @@ def _member_spec(t: dict, repo: str, repo_checks: str | None = None) -> dict:
         "type": "coding",
         "goal": t["goal"],
         "workspace": {"repo": repo, "worktree": True,
-                      "branch": f"setpoint/{t['name']}"},
+                      "branch": f"setpoint/{t['name']}",
+                      **({"prepare": prepare} if prepare else {})},
         "execute": {"engine": t["engine"]},
         "verify": verify,
         "stop": {"max_iters": 6},
@@ -190,6 +214,8 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
               "reported 'unreviewed'. Re-run with --engines a,b to enable review.",
               file=sys.stderr)
 
+    prepare = detect_prepare(Path(repo))
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "plan.md").write_text(_plan_md(name, tasks))
@@ -198,7 +224,7 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
     members = []
     for t in tasks:
         member = f"{t['name']}.setpoint.yaml"
-        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo, repo_checks),
+        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo, repo_checks, prepare),
                                                  sort_keys=False))
         members.append(f"./{member}")
 
