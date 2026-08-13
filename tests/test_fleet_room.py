@@ -555,3 +555,26 @@ def test_single_engine_fleet_marks_members_unreviewed(tmp_path):
                         oneshot=lambda engine, prompt, cwd=None: "")
     assert set(results.values()) == {"unreviewed"}
     assert any("single-engine" in b for _, _, b in room.msgs)
+
+
+def test_each_task_gets_a_named_reviewer_announced_in_room(tmp_path):
+    room = FakeRoom()
+    run_fleet(str(_write_bundle(tmp_path)), run_loop=_passing_run_loop,
+              room_client=room, oneshot=lambda engine, prompt, cwd=None: "")
+    bodies = [b for _, _, b in room.msgs]
+    assert any("reviewer for API is codex-reviewer" in b for b in bodies)
+    assert any("reviewer for UI is claude-reviewer" in b for b in bodies)
+
+
+def test_room_context_names_the_reviewer(tmp_path):
+    goals = {}
+
+    def capture(spec, *, fresh=False, ui=None, abort_check=None, runs_root=None):
+        from types import SimpleNamespace
+        goals[spec.name] = spec.goal
+        return SimpleNamespace(status="passed")
+
+    run_fleet(str(_write_bundle(tmp_path)), run_loop=capture,
+              room_client=FakeRoom(), oneshot=lambda e, p, cwd=None: "")
+    assert "codex-reviewer" in goals["api"]
+    assert "do not broadcast" in goals["api"].lower()

@@ -16,11 +16,15 @@ ROOM_CONTEXT_TEMPLATE = """ROOM CONTEXT — you are a fleet worker.
 room_id: {room_id}
 task_id: {task_id}
 agent: {agent}
+reviewer: {reviewer}
 Before writing any code, invoke your `room-worker` skill and follow it exactly:
 claim your task, read the channel from cursor 0, negotiate any interface
 contract before building the boundary, post status/handoff messages, request
 review when your gate passes, and mark your task done or abandoned. All room
-access is through your scry_* MCP tools."""
+access is through your scry_* MCP tools.
+Your reviewer is already assigned: {reviewer}. Address your review request to
+that agent by name in your task thread — do not broadcast to the room and do
+not ping other agents hoping someone picks it up."""
 
 REVIEW_PROMPT = """You are the cross-engine reviewer for a fleet task.
 Using your scry room MCP tools: read the channel thread for task {task_id}
@@ -124,9 +128,10 @@ def _run_member(member_path: Path, fresh: bool, run_loop, *,
         # joins it as a scalar ("\n\n".join([spec.context.notes])) --
         # cycle.py:89. A list here would blow up every real member's first
         # DISCOVER with a TypeError. Concatenate, don't wrap.
-        block = ROOM_CONTEXT_TEMPLATE.format(room_id=room_ctx["room_id"],
-                                             task_id=room_ctx["task_id"],
-                                             agent=room_ctx["agent"])
+        block = ROOM_CONTEXT_TEMPLATE.format(
+            room_id=room_ctx["room_id"], task_id=room_ctx["task_id"],
+            agent=room_ctx["agent"],
+            reviewer=room_ctx.get("reviewer") or "none (single-engine fleet)")
         spec.context.notes = (
             (spec.context.notes + "\n\n" if spec.context.notes else "") + block)
         # notes only feeds Cycle._discover, which agent engines (claude/codex/
@@ -180,15 +185,16 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
     if status not in ("passed", "completed-capped"):
         return status
 
-    engine = room_ctx["engine"]
-    reviewer_engine = next((e for e in room_ctx.get("fleet_engines", []) if e != engine), None)
-    if reviewer_engine is None:
+    # The reviewer was assigned and announced at launch (_post_tasks); use
+    # that assignment rather than recomputing it, so what the worker was told
+    # and who actually reviews are guaranteed to be the same agent.
+    reviewer = room_ctx.get("reviewer") or ""
+    if not reviewer:
         _post("status", f"{member_name}: UNREVIEWED — fleet is single-engine, so no "
                         f"cross-review is possible (maker == checker). A human must "
                         f"review this member's diff.")
         return UNREVIEWED
-
-    reviewer = f"{reviewer_engine}-reviewer"
+    reviewer_engine = reviewer.rsplit("-reviewer", 1)[0]
     prompt = REVIEW_PROMPT.format(task_id=task_id, room_id=room_id,
                                   branch=room_ctx["branch"], repo=room_ctx["repo"],
                                   reviewer=reviewer)
@@ -338,6 +344,25 @@ def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
 
     for ctx in member_room_ctx.values():
         ctx["fleet_engines"] = fleet_engines
+        # Assign the reviewer at plan time, not at review time: a worker that
+        # has to find its own reviewer broadcasts and waits.
+        reviewer_engine = next((e for e in fleet_engines if e != ctx["engine"]), None)
+        ctx["reviewer"] = f"{reviewer_engine}-reviewer" if reviewer_engine else ""
+
+    for i in order:
+        entry = tasks[i]
+        ctx = member_room_ctx[entry["member"]]
+        if ctx["reviewer"]:
+            room.post(room_id, "orchestrator", "status",
+                      f"reviewer for {entry['title']} is {ctx['reviewer']} — "
+                      f"{ctx['agent']} requests review in this thread when its gate "
+                      f"passes; no other agent should pick it up",
+                      task_id=ctx["task_id"])
+        else:
+            room.post(room_id, "orchestrator", "status",
+                      f"{entry['title']} has no reviewer — this fleet is "
+                      f"single-engine, so its member will be reported unreviewed",
+                      task_id=ctx["task_id"])
 
     return member_room_ctx
 
