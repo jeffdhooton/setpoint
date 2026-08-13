@@ -17,7 +17,7 @@
 - The global commit-msg hook requires a Capitalized subject ≤50 chars; the commit messages below comply — do not lengthen. Every body ends with: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - Follow repo idioms: `from __future__ import annotations`, lazy imports in `__main__.py` subcommands, injection seams for tests instead of mocking modules.
 - Room MCP tool names (server side, already live): `scry_room_create`, `scry_room_close`, `scry_task_post`, `scry_task_claim`, `scry_task_update`, `scry_task_list`, `scry_post`, `scry_read`. Message kinds: `status|handoff|contract|review`. Task statuses: `open|claimed|in_progress|review|done|abandoned`.
-- Full verify per task: `cd ~/workspace/setpoint && python -m pytest tests/ -q` (all green) — run via `uv run pytest tests/ -q` if bare pytest is missing.
+- Full verify per task: `cd ~/workspace/setpoint && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null .venv/bin/python -m pytest tests/ -q` — the env vars neutralize the machine's global commit-msg hook, which otherwise fails the 26 tests that commit in temp repos (baseline: 277 passed). Use `.venv/bin/python` for every pytest run in this plan.
 - Workers deliver PR-only through existing `deliver.py` machinery — nothing in this plan may add merge capability.
 
 ---
@@ -93,7 +93,7 @@ def test_spec_accepts_kimi_engine():
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd ~/workspace/setpoint && python -m pytest tests/test_kimi_executor.py -q`
+Run: `cd ~/workspace/setpoint && .venv/bin/python -m pytest tests/test_kimi_executor.py -q`
 Expected: ImportError (KimiExecutor undefined).
 
 - [ ] **Step 3: Implement**
@@ -130,7 +130,7 @@ In `setpoint/spec.py:11` add `"kimi"` to `VALID_ENGINES`. In `setpoint/__main__.
 
 - [ ] **Step 4: Run tests**
 
-Run: `python -m pytest tests/test_kimi_executor.py -q` → 5 passed; then `python -m pytest tests/ -q` → all green (existing engine-validation tests must not have hardcoded the old set — if one asserts the exact VALID_ENGINES contents, update that assertion to include kimi and say so in your report).
+Run: `.venv/bin/python -m pytest tests/test_kimi_executor.py -q` → 5 passed; then `python -m pytest tests/ -q` → all green (existing engine-validation tests must not have hardcoded the old set — if one asserts the exact VALID_ENGINES contents, update that assertion to include kimi and say so in your report).
 
 - [ ] **Step 5: Commit**
 
@@ -305,7 +305,7 @@ def test_close_idempotent():
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `python -m pytest tests/test_room_client.py -q`
+Run: `.venv/bin/python -m pytest tests/test_room_client.py -q`
 Expected: ImportError (setpoint.room does not exist).
 
 - [ ] **Step 4: Implement setpoint/room.py**
@@ -428,7 +428,7 @@ class RoomClient:
 
 - [ ] **Step 5: Run tests**
 
-Run: `python -m pytest tests/test_room_client.py -q` → 3 passed; full suite green.
+Run: `.venv/bin/python -m pytest tests/test_room_client.py -q` → 3 passed; full suite green.
 
 - [ ] **Step 6: Commit**
 
@@ -553,7 +553,7 @@ def test_decompose_rejects_bad_engine(tmp_path):
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `python -m pytest tests/test_decompose.py -q`
+Run: `.venv/bin/python -m pytest tests/test_decompose.py -q`
 Expected: ImportError (setpoint.decompose missing).
 
 - [ ] **Step 3: Implement setpoint/decompose.py**
@@ -731,7 +731,7 @@ In `setpoint/__main__.py`, extend `cmd_fleet` (which currently handles `run|stat
 
 - [ ] **Step 5: Run tests**
 
-Run: `python -m pytest tests/test_decompose.py -q` → 2 passed; full suite green. Also sanity-check the generated member spec loads: add to the first test:
+Run: `.venv/bin/python -m pytest tests/test_decompose.py -q` → 2 passed; full suite green. Also sanity-check the generated member spec loads: add to the first test:
 
 ```python
     from setpoint.spec import load_spec
@@ -935,7 +935,7 @@ Note on `SETPOINT_RUNS_ROOT`: fleet.py reads `_runs_root()` from `__main__.py` (
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `python -m pytest tests/test_fleet_room.py -q`
+Run: `.venv/bin/python -m pytest tests/test_fleet_room.py -q`
 Expected: TypeError (`run_fleet` has no `room_client` kwarg).
 
 - [ ] **Step 3: Implement**
@@ -969,7 +969,7 @@ one-line justification."""
 
 - [ ] **Step 4: Run tests**
 
-Run: `python -m pytest tests/test_fleet_room.py tests/test_fleet.py -q` → all pass (existing fleet tests unchanged); full suite green.
+Run: `.venv/bin/python -m pytest tests/test_fleet_room.py tests/test_fleet.py -q` → all pass (existing fleet tests unchanged); full suite green.
 
 - [ ] **Step 5: Commit**
 
@@ -1066,7 +1066,7 @@ cross-review each other's branches across engines. See
 
 - [ ] **Step 3: Full suite, commit**
 
-Run: `python -m pytest tests/ -q` → green.
+Run: `.venv/bin/python -m pytest tests/ -q` → green.
 
 ```bash
 git add README.md docs/fleet-rooms.md
