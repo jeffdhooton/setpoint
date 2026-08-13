@@ -64,7 +64,8 @@ def _run_name(member_path: Path) -> str:
 
 def _run_member(member_path: Path, fresh: bool, run_loop, *,
                 room_ctx: dict | None = None, room=None, oneshot=None,
-                room_lock: threading.Lock | None = None) -> tuple[str, str]:
+                room_lock: threading.Lock | None = None,
+                runs_root: Path | None = None) -> tuple[str, str]:
     from setpoint.spec import load_spec
 
     sentinel = stop_sentinel_path()
@@ -94,7 +95,8 @@ def _run_member(member_path: Path, fresh: bool, run_loop, *,
 
     try:
         state = run_loop(spec, fresh=fresh, ui=NullUI(),
-                          abort_check=lambda: sentinel.exists())
+                          abort_check=lambda: sentinel.exists(),
+                          runs_root=runs_root)
         status = getattr(state, "status", "error")
     except Exception:
         print(f"setpoint fleet: member {spec.name} failed:\n{traceback.format_exc()}",
@@ -353,6 +355,8 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
         room = room_client
         room_lock = threading.Lock()
 
+    member_runs_root = fleet_runs_root(fs, _runs_root())
+
     results: dict[str, str] = {}
     skipped = 0
 
@@ -401,7 +405,8 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
                 try:
                     return _run_member(member_path, fresh, run_loop,
                                        room_ctx=member_room_ctx.get(_run_name(member_path)),
-                                       room=room, oneshot=oneshot, room_lock=room_lock)
+                                       room=room, oneshot=oneshot, room_lock=room_lock,
+                                       runs_root=member_runs_root)
                 finally:
                     sem.release()
 
@@ -530,6 +535,14 @@ def _close_the_loop(fs, room, room_id, results):
             "results": dict(sorted(results.items()))}
 
 
+def fleet_runs_root(fs, runs_root: Path) -> Path:
+    """Where this fleet's member run state lives. Run state used to be global
+    per spec name, so a second wave reusing a member spec overwrote the first
+    wave's state (the viewer then showed a finished fleet as 3/4).
+    Namespacing by fleet makes each wave's record its own."""
+    return _fleet_out_dir(fs, runs_root) / "runs"
+
+
 def _fleet_out_dir(fs, runs_root: Path) -> Path:
     """Where fleet-level artifacts (status.md, report.md) live: beside
     "runs", not inside it -- runs_root is ~/.setpoint/runs by default, so
@@ -539,9 +552,10 @@ def _fleet_out_dir(fs, runs_root: Path) -> Path:
 
 def _status_lines(fs, runs_root: Path) -> list[str]:
     lines = [f"# fleet {fs.name}", "", f"{'member':30} {'status':16} {'iters':>6} {'spend':>8}"]
+    member_runs = fleet_runs_root(fs, runs_root)
     for member in fs.members:
         name = _run_name(member)
-        sp = runs_root / name / "state.json"
+        sp = member_runs / name / "state.json"
         if sp.exists():
             s = json.loads(sp.read_text())
             lines.append(f"{name:30} {s.get('status','?'):16} "

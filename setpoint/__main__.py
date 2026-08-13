@@ -37,7 +37,8 @@ def _build_plan_client(spec):
     return make_deepseek_client()
 
 
-def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
+def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None,
+             runs_root: Path | None = None):
     from setpoint.workspace import prepare_workspace
     from setpoint.budget import Budget, PRICING
     from setpoint.memory import Memory
@@ -46,7 +47,9 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
     from setpoint.ui import StreamUI
     from setpoint.cycle import Cycle
 
-    memory = Memory(spec.name, root=_runs_root())
+    # runs_root lets a fleet namespace its members' state under itself, so a
+    # second wave reusing a member spec cannot overwrite the first wave's run.
+    memory = Memory(spec.name, root=runs_root or _runs_root())
     if fresh:
         import shutil
         if memory.root.exists():
@@ -135,16 +138,28 @@ def cmd_run(spec_path: str, fresh: bool = False) -> int:
 
 
 def cmd_ls() -> int:
+    import json
     root = _runs_root()
-    if not root.exists():
+    fleets_root = root.parent / "fleets"
+    # Fleet members' state lives under ~/.setpoint/fleets/<fleet>/runs/, so a
+    # listing that only walked the global runs root would miss every member.
+    dirs: list[tuple[str | None, Path]] = []
+    if root.exists():
+        dirs += [(None, d) for d in sorted(root.iterdir()) if d.is_dir()]
+    if fleets_root.exists():
+        for f in sorted(fleets_root.iterdir()):
+            runs = f / "runs"
+            if runs.is_dir():
+                dirs += [(f.name, d) for d in sorted(runs.iterdir()) if d.is_dir()]
+    if not dirs:
         print("no runs yet")
         return 0
-    import json
-    for d in sorted(root.iterdir()):
+    for fleet_name, d in dirs:
         sp = d / "state.json"
         if sp.exists():
             s = json.loads(sp.read_text())
-            print(f"{s['name']:30} {s['status']:18} "
+            label = f"{fleet_name}/{s['name']}" if fleet_name else s["name"]
+            print(f"{label:38} {s['status']:18} "
                   f"iters={len(s.get('iters', []))} ${s.get('spent_usd', 0):.2f}")
     return 0
 

@@ -88,7 +88,7 @@ def test_room_mode_orchestration(tmp_path, monkeypatch):
     class State:
         status = "passed"
 
-    def fake_run_loop(spec, *, fresh=False, ui=None, abort_check=None):
+    def fake_run_loop(spec, *, fresh=False, ui=None, abort_check=None, runs_root=None):
         # context.notes is a str (spec.py:26) -- Cycle._discover joins it as
         # a scalar, so a room-mode member must still see a plain string here.
         seen_notes[spec.name] = spec.context.notes
@@ -317,7 +317,7 @@ def test_decompose_bundle_runs_room_mode(tmp_path, monkeypatch):
     class State:
         status = "passed"
 
-    def fake_run_loop(spec, *, fresh=False, ui=None, abort_check=None):
+    def fake_run_loop(spec, *, fresh=False, ui=None, abort_check=None, runs_root=None):
         seen_specs[spec.name] = spec
         return State()
 
