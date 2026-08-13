@@ -550,18 +550,41 @@ def _fleet_out_dir(fs, runs_root: Path) -> Path:
     return runs_root.parent / "fleets" / fs.name
 
 
+def _fmt_elapsed(secs: float) -> str:
+    if not secs:
+        return "—"
+    m, s = divmod(int(secs), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
+
+
+def _member_engine(member_path: Path) -> str:
+    from setpoint.spec import load_spec
+    try:
+        return load_spec(str(member_path)).execute.engine
+    except Exception:
+        return ""
+
+
 def _status_lines(fs, runs_root: Path) -> list[str]:
-    lines = [f"# fleet {fs.name}", "", f"{'member':30} {'status':16} {'iters':>6} {'spend':>8}"]
+    lines = [f"# fleet {fs.name}", "",
+             f"{'member':30} {'status':20} {'iters':>6} {'elapsed':>9} {'spend':>9}"]
     member_runs = fleet_runs_root(fs, runs_root)
     for member in fs.members:
         name = _run_name(member)
+        # Only the deepseek engine's spend flows through this process's
+        # budget; claude/codex/kimi bill through their own CLIs, so a "$0.00"
+        # there is a lie, not a measurement.
+        billable = _member_engine(member) == "deepseek"
         sp = member_runs / name / "state.json"
         if sp.exists():
             s = json.loads(sp.read_text())
-            lines.append(f"{name:30} {s.get('status','?'):16} "
-                         f"{len(s.get('iters', [])):>6} ${s.get('spent_usd', 0):>7.2f}")
+            spend = f"${s.get('spent_usd', 0):.2f}" if billable else "—"
+            lines.append(f"{name:30} {s.get('status','?'):20} "
+                         f"{len(s.get('iters', [])):>6} "
+                         f"{_fmt_elapsed(s.get('elapsed_secs', 0)):>9} {spend:>9}")
         else:
-            lines.append(f"{name:30} {'pending':16} {0:>6} ${0:>7.2f}")
+            lines.append(f"{name:30} {'pending':20} {0:>6} {'—':>9} {'—':>9}")
     return lines
 
 

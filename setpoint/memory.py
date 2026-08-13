@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -29,9 +30,16 @@ class IterRecord:
 @dataclass
 class RunState:
     name: str
-    status: str = "new"  # new | running | passed | stopped | budget_exhausted
+    # new | running | passed | completed-capped | stopped | budget_exhausted |
+    # gate_error
+    status: str = "new"
     iters: list[IterRecord] = field(default_factory=list)
     spent_usd: float = 0.0
+    # Wall-time is the honest cost signal for CLI engines, which bill outside
+    # this process. Defaulted so a state.json written before these fields
+    # existed still loads.
+    started_at: float = 0.0
+    elapsed_secs: float = 0.0
 
 
 class Memory:
@@ -44,9 +52,11 @@ class Memory:
     def start(self) -> RunState:
         self.root.mkdir(parents=True, exist_ok=True)
         state = self.load()
+        if not state.started_at:  # a resume keeps the original start time
+            state.started_at = time.time()
         if state.status == "new":
             state.status = "running"
-            self._write(state)
+        self._write(state)
         return state
 
     def load(self) -> RunState:
@@ -58,6 +68,8 @@ class Memory:
             status=raw.get("status", "new"),
             iters=[IterRecord(**r) for r in raw.get("iters", [])],
             spent_usd=raw.get("spent_usd", 0.0),
+            started_at=raw.get("started_at", 0.0),
+            elapsed_secs=raw.get("elapsed_secs", 0.0),
         )
 
     def append(self, rec: IterRecord) -> None:
@@ -70,6 +82,8 @@ class Memory:
     def set_status(self, status: str) -> None:
         state = self.load()
         state.status = status
+        if state.started_at:
+            state.elapsed_secs = time.time() - state.started_at
         self._write(state)
 
     def context_block(self) -> str:

@@ -261,3 +261,25 @@ def test_two_fleets_reusing_a_member_name_do_not_collide(tmp_path):
     b = fleet_runs_root(FleetSpec(name="wave2", members=[Path("m.setpoint.yaml")]), runs)
     assert a != b
     assert a == runs.parent / "fleets" / "wave1" / "runs"
+
+
+def test_status_lines_show_elapsed_and_hide_fake_spend(tmp_path, monkeypatch):
+    import json
+    from setpoint import fleet
+    from setpoint.fleet_spec import load_fleet
+    monkeypatch.setattr("setpoint.spec.load_spec",
+                        lambda p: SimpleNamespace(
+                            name=Path(p).stem.replace(".setpoint", ""),
+                            execute=SimpleNamespace(engine="claude")))
+    runs = tmp_path / "runs"
+    fp, _ = _make_fleet(tmp_path, n=1, concurrency=1)
+    fs = load_fleet(str(fp))
+    member_runs = fleet.fleet_runs_root(fs, runs)
+    (member_runs / "m0").mkdir(parents=True)
+    (member_runs / "m0" / "state.json").write_text(json.dumps(
+        {"name": "m0", "status": "passed", "iters": [{}], "spent_usd": 0.0,
+         "elapsed_secs": 754.0}))
+    text = "\n".join(fleet._status_lines(fs, runs))
+    assert "12m34s" in text
+    assert "—" in text          # claude spend is not ours to report
+    assert "$0.00" not in text

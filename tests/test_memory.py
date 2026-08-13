@@ -99,3 +99,35 @@ def test_iterrecord_evidence_fields_default_and_backcompat(tmp_path):
     }))
     r = Memory("t", root=root).load().iters[0]
     assert r.symptom == "" and r.root_cause == ""
+
+
+def test_start_stamps_started_at_and_set_status_records_elapsed(tmp_path):
+    from setpoint.memory import Memory
+    m = Memory("r", root=tmp_path)
+    m.start()
+    assert m.load().started_at > 0
+    m.set_status("passed")
+    st = m.load()
+    assert st.elapsed_secs >= 0
+    assert st.status == "passed"
+
+
+def test_started_at_is_not_reset_by_a_resume(tmp_path):
+    from setpoint.memory import Memory
+    m = Memory("r", root=tmp_path)
+    m.start()
+    first = m.load().started_at
+    m.set_status("stopped")
+    Memory("r", root=tmp_path).start()
+    assert Memory("r", root=tmp_path).load().started_at == first
+
+
+def test_state_json_without_the_new_fields_still_loads(tmp_path):
+    import json
+    from setpoint.memory import Memory
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "state.json").write_text(json.dumps(
+        {"name": "r", "status": "passed", "iters": [], "spent_usd": 1.5}))
+    st = Memory("r", root=tmp_path).load()
+    assert st.elapsed_secs == 0.0 and st.started_at == 0.0
