@@ -24,13 +24,14 @@ class Gate(abc.ABC):
         ...
 
 
-def build_gate(spec, judge_client=None) -> Gate:
+def build_gate(spec, judge_client=None, env=None) -> Gate:
     from .command import CommandGate
     from .judge import JudgeGate
 
     if spec.verify.gate == "command":
         return CommandGate(command=spec.verify.command,
-                           timeout=getattr(spec.verify, "timeout_secs", 600))
+                           timeout=getattr(spec.verify, "timeout_secs", 600),
+                           env=env)
     rubric_text = Path(spec.verify.rubric).expanduser().read_text()
     artifact = spec.deliver.get("artifact") if spec.deliver else None
     judge_model = spec.verify.judge_model

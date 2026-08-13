@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Ports are derived, never reused: two worktrees of the same repo run the
+# same stack, and a reused port silently measures the *other* tree.
+# 20000-39999 avoids the ephemeral range and common dev defaults.
+_PORT_FLOOR = 20000
+_PORT_SPAN = 20000
+
+
+def port_base(worktree: Path) -> int:
+    digest = hashlib.sha256(str(Path(worktree).resolve()).encode()).digest()
+    return _PORT_FLOOR + int.from_bytes(digest[:4], "big") % _PORT_SPAN
 
 
 class Worktree:
@@ -12,6 +25,7 @@ class Worktree:
         self.branch = branch
         self.base = base
         self.path: Path | None = None
+        self.port_base: int | None = None
         # The ref create() actually branched from. "HEAD" means the fallback
         # fired (no origin, or the fetch failed) -- read it when a run's
         # starting point is in question.
@@ -55,6 +69,7 @@ class Worktree:
             cwd=self.repo, check=True, capture_output=True, text=True,
         )
         self.path = target
+        self.port_base = port_base(target)
         return target
 
     def cleanup(self) -> None:
@@ -67,10 +82,11 @@ class Worktree:
         self.path = None
 
 
-def _run_prepare(command: str, cwd: Path) -> None:
+def _run_prepare(command: str, cwd: Path, env: dict | None = None) -> None:
     print(f"setpoint: workspace.prepare — {command}")
     proc = subprocess.run(command, shell=True, cwd=cwd,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True,
+                          env={**os.environ, **(env or {})})
     if proc.returncode != 0:
         tail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-2000:]
         raise RuntimeError(
@@ -85,9 +101,12 @@ def prepare_workspace(spec) -> tuple[Path, Worktree | None]:
         base = (getattr(spec, "deliver", None) or {}).get("base") or "main"
         wt = Worktree(repo=spec.workspace.repo, branch=branch, base=base)
         cwd = wt.create()
+        (cwd / ".setpoint-ports.env").write_text(
+            f"SETPOINT_PORT_BASE={wt.port_base}\n")
         if spec.workspace.prepare:
             try:
-                _run_prepare(spec.workspace.prepare, cwd)
+                _run_prepare(spec.workspace.prepare, cwd,
+                             {"SETPOINT_PORT_BASE": str(wt.port_base)})
             except Exception:
                 # Do not leak the worktree when prepare fails -- the run is
                 # over before it started.

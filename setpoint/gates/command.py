@@ -13,9 +13,13 @@ from . import Gate, GateResult
 class CommandGate(Gate):
     supports_preflight = True
 
-    def __init__(self, command: str, timeout: float = 600):
+    def __init__(self, command: str, timeout: float = 600, env: dict | None = None):
         self.command = command
         self.timeout = timeout
+        # Merged over os.environ for the verify subprocess. Carries
+        # SETPOINT_PORT_BASE so the gate measures its own worktree's stack,
+        # not a sibling's on a reused port.
+        self.env = env
 
     def verify(self, cwd: Path, on_event: Callable) -> GateResult:
         on_event({"kind": "verify_start", "command": self.command})
@@ -23,7 +27,8 @@ class CommandGate(Gate):
         # hold the output pipe open and block communicate() past the shell's exit.
         proc = subprocess.Popen(self.command, shell=True, cwd=cwd,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, start_new_session=True)
+                                text=True, start_new_session=True,
+                                env={**os.environ, **(self.env or {})})
         timed_out = False
         try:
             stdout, stderr = proc.communicate(timeout=self.timeout)

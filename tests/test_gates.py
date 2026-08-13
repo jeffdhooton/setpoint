@@ -165,3 +165,11 @@ def test_command_gate_reports_returncode(tmp_path):
     g = CommandGate(command="exit 127")
     r = g.verify(cwd=tmp_path, on_event=lambda e: None)
     assert r.returncode == 127
+
+
+def test_command_gate_passes_env_to_the_verify_subprocess(tmp_path):
+    from setpoint.gates.command import CommandGate
+    gate = CommandGate(command='test "$SETPOINT_PORT_BASE" = "31337"',
+                       env={"SETPOINT_PORT_BASE": "31337"})
+    res = gate.verify(cwd=tmp_path, on_event=lambda e: None)
+    assert res.passed is True

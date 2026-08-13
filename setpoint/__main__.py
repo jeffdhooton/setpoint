@@ -67,11 +67,23 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None):
 
     judge_client = (make_judge_client(spec.verify.judge_model, engine=spec.verify.judge_engine)
                     if spec.verify.gate == "judge" else None)
-    gate = build_gate(spec, judge_client=judge_client)
+    # The workspace comes first: the gate needs the worktree's derived port
+    # base, so that a member's verify measures its own stack rather than a
+    # sibling worktree's on a reused port.
+    cwd, wt = prepare_workspace(spec)
+    gate_env = ({"SETPOINT_PORT_BASE": str(wt.port_base)}
+                if wt is not None and wt.port_base else None)
+    if gate_env:
+        spec.goal += (
+            f"\n\nPorts: this worktree owns the port range starting at "
+            f"{wt.port_base}. Any server you start must bind {wt.port_base} or "
+            f"above (the value is also in .setpoint-ports.env). Never reuse a "
+            f"default port — a sibling worktree is running the same stack.")
+
+    gate = build_gate(spec, judge_client=judge_client, env=gate_env)
     executor = _build_executor(spec)
     plan_client = _build_plan_client(spec)
 
-    cwd, wt = prepare_workspace(spec)
     try:
         cycle = Cycle(spec, executor, gate, memory, budget, ui, plan_client,
                       abort_check=abort_check, lesson_store=lesson_store)

@@ -92,6 +92,28 @@ def test_prepare_workspace_passes_deliver_base_as_worktree_base(tmp_path):
     wt.cleanup()
 
 
+def test_port_base_is_deterministic_and_distinct(tmp_path):
+    from setpoint.workspace import port_base
+    a, b = tmp_path / "wt-a", tmp_path / "wt-b"
+    assert port_base(a) == port_base(a)          # deterministic
+    assert port_base(a) != port_base(b)          # distinct per worktree
+    assert 20000 <= port_base(a) < 40000         # in the private range
+
+
+def test_worktree_writes_ports_env_file(tmp_path):
+    from setpoint.workspace import port_base
+    repo = _make_repo(tmp_path)
+    spec = LoopSpec(name="n", goal="g", type="coding",
+                    workspace=Workspace(repo=repo, worktree=True, branch=None),
+                    context=Context(), execute=ExecuteCfg(),
+                    verify=VerifyCfg(command="true"),
+                    stop=StopCfg(), budget=BudgetCfg())
+    cwd, wt = prepare_workspace(spec)
+    assert wt.port_base == port_base(cwd)
+    assert f"SETPOINT_PORT_BASE={wt.port_base}" in (cwd / ".setpoint-ports.env").read_text()
+    wt.cleanup()
+
+
 def test_prepare_command_runs_once_in_the_worktree(tmp_path):
     repo = _make_repo(tmp_path)
     spec = LoopSpec(name="n", goal="g", type="coding",
