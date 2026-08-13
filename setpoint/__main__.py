@@ -175,6 +175,26 @@ def cmd_fleet(rest: list[str]) -> int:
         path.write_text("stop")
         print(f"fleet stop requested — sentinel at {path}")
         return 0
+    if sub == "plan":
+        # setpoint fleet plan <idea.md> --repo <path> --engines a,b,c [--out DIR]
+        if not args:
+            print("fleet plan: missing idea path", file=sys.stderr)
+            return 1
+        from setpoint.decompose import decompose
+        idea = args[0]
+        opts = args[1:]
+        def _opt(flag, default=None):
+            return opts[opts.index(flag) + 1] if flag in opts else default
+        repo = _opt("--repo")
+        if not repo:
+            print("setpoint fleet plan: --repo is required", file=sys.stderr)
+            return 2
+        engines = (_opt("--engines") or "claude").split(",")
+        out = _opt("--out") or f"fleets/{Path(idea).stem}"
+        fleet_path = decompose(idea, repo, engines, out)
+        print(f"fleet bundle written to {fleet_path.parent}")
+        print(f"review plan.md, then: setpoint fleet run {fleet_path}")
+        return 0
     if not args:
         print(f"fleet {sub}: missing fleet.yaml", file=sys.stderr)
         return 1
