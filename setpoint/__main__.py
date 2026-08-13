@@ -181,16 +181,36 @@ def cmd_fleet(rest: list[str]) -> int:
             print("fleet plan: missing idea path", file=sys.stderr)
             return 1
         from setpoint.decompose import decompose
+        from setpoint.spec import VALID_ENGINES
         idea = args[0]
         opts = args[1:]
-        def _opt(flag, default=None):
-            return opts[opts.index(flag) + 1] if flag in opts else default
-        repo = _opt("--repo")
+        known_flags = ("--repo", "--engines", "--out")
+        values: dict[str, str] = {}
+        i = 0
+        while i < len(opts):
+            tok = opts[i]
+            if tok in known_flags:
+                if i + 1 >= len(opts):
+                    print(f"fleet plan: {tok} requires a value", file=sys.stderr)
+                    return 2
+                values[tok] = opts[i + 1]
+                i += 2
+                continue
+            if tok.startswith("--"):
+                print(f"fleet plan: unknown flag {tok}", file=sys.stderr)
+                return 2
+            i += 1
+        repo = values.get("--repo")
         if not repo:
             print("setpoint fleet plan: --repo is required", file=sys.stderr)
             return 2
-        engines = (_opt("--engines") or "claude").split(",")
-        out = _opt("--out") or f"fleets/{Path(idea).stem}"
+        engines = (values.get("--engines") or "claude").split(",")
+        unknown = set(engines) - VALID_ENGINES
+        if unknown:
+            print(f"fleet plan: unknown engine(s) {sorted(unknown)}, "
+                  f"must be one of {sorted(VALID_ENGINES)}", file=sys.stderr)
+            return 2
+        out = values.get("--out") or f"fleets/{Path(idea).stem}"
         fleet_path = decompose(idea, repo, engines, out)
         print(f"fleet bundle written to {fleet_path.parent}")
         print(f"review plan.md, then: setpoint fleet run {fleet_path}")

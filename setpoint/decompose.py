@@ -53,8 +53,19 @@ def _default_oneshot(engine: str, prompt: str) -> str:
 
 def _extract_json(text: str) -> dict:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else text[text.find("{"): text.rfind("}") + 1]
-    return json.loads(candidate)
+    if fenced:
+        candidate = fenced.group(1)
+    else:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(
+                f"decompose: no JSON object found in model output: {text[:200]!r}")
+        candidate = text[start:end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"decompose: no JSON object found in model output: {text[:200]!r}") from e
 
 
 def _validate(tasks: list[dict], engines: list[str]) -> None:

@@ -75,3 +75,52 @@ def test_decompose_rejects_bad_engine(tmp_path):
     with pytest.raises(ValueError, match="engine"):
         decompose(str(idea), str(tmp_path / "repo"), ["claude"],
                   str(tmp_path / "out"), oneshot=bad)
+
+
+def test_extract_json_no_json_is_helpful(tmp_path):
+    import pytest
+
+    idea = tmp_path / "i.md"
+    idea.write_text("x")
+    (tmp_path / "repo").mkdir()
+
+    def no_json(engine, prompt):
+        return "I cannot help with that"
+
+    with pytest.raises(ValueError, match="no JSON object"):
+        decompose(str(idea), str(tmp_path / "repo"), ["claude"],
+                  str(tmp_path / "out"), oneshot=no_json)
+
+
+def test_cli_plan_repo_flag_requires_value(tmp_path, monkeypatch):
+    import setpoint.__main__ as cli
+
+    idea = tmp_path / "idea.md"
+    idea.write_text("x")
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["fleet", "plan", "idea.md", "--repo"]) == 2
+
+
+def test_cli_plan_unknown_flag(tmp_path, monkeypatch):
+    import setpoint.__main__ as cli
+
+    idea = tmp_path / "idea.md"
+    idea.write_text("x")
+    (tmp_path / "repo").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["fleet", "plan", "idea.md", "--repo", str(tmp_path / "repo"),
+                     "--engiens", "claude"]) == 2
+
+
+def test_cli_plan_rejects_unknown_engine(tmp_path, monkeypatch):
+    import setpoint.__main__ as cli
+
+    idea = tmp_path / "idea.md"
+    idea.write_text("x")
+    (tmp_path / "repo").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["fleet", "plan", "idea.md", "--repo", str(tmp_path / "repo"),
+                     "--engines", "claude,gemini"]) == 2
