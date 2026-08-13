@@ -89,14 +89,12 @@ def test_codex_executor_falls_back_to_raw_text():
                      cwd=Path("/tmp/wt"), on_event=lambda e: None)
     assert "final answer line" in res.text
     assert res.usage.output_tokens == 0
-    # maker must run in a writable sandbox or it cannot edit files
     assert captured["argv"][:2] == ["codex", "exec"]
-    assert "--sandbox" in captured["argv"]
-    assert "workspace-write" in captured["argv"]
     # non-interactive runs have no one to answer approval prompts (including
-    # for MCP tool calls), so -a never must be set or codex auto-denies them
-    assert "-a" in captured["argv"]
-    assert "never" in captured["argv"]
+    # for MCP tool calls), so --approve-for-me must be set or codex
+    # auto-denies them. It also implies the workspace-write sandbox the
+    # maker needs to edit files, so no separate --sandbox flag is passed.
+    assert "--approve-for-me" in captured["argv"]
     # never block reading stdin on an unattended run
     assert captured["stdin"] == subprocess.DEVNULL
 

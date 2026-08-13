@@ -86,16 +86,16 @@ def _claude_parse(stdout: str) -> tuple[str, Usage]:
 
 
 def _codex_argv(prompt: str, cwd: Path, model: str) -> list[str]:
-    # --sandbox workspace-write lets the maker edit files in the worktree
-    # (exec defaults to read-only, which would block all edits). The judge
-    # uses read-only separately (see gates/agent_judge.py).
-    # -a never (--ask-for-approval never): setpoint executors always run
-    # non-interactively, so an approval prompt -- including for MCP tool
-    # calls like scry_task_claim -- has no one to answer it and codex
-    # auto-denies it ("user cancelled MCP tool call"). "never" lets
-    # sandboxed tool/MCP calls proceed without stalling on approval.
-    argv = ["codex", "exec", "--json", "--sandbox", "workspace-write",
-            "-a", "never"]
+    # --approve-for-me: setpoint executors always run non-interactively, so
+    # an approval prompt -- including for MCP tool calls like
+    # scry_task_claim -- has no one to answer it and codex auto-denies it
+    # ("user cancelled MCP tool call"). --approve-for-me routes approval
+    # requests through automatic review instead of stalling, and it already
+    # implies the workspace-write sandbox (the maker needs to edit files in
+    # the worktree; exec defaults to read-only). Do not also pass
+    # --sandbox workspace-write -- the two flags conflict. The judge uses
+    # read-only separately (see gates/agent_judge.py).
+    argv = ["codex", "exec", "--json", "--approve-for-me"]
     if model and model != "codex":
         argv += ["--model", model]
     argv.append(prompt)
