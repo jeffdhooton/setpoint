@@ -149,3 +149,22 @@ def test_prepare_workspace_no_worktree(tmp_path):
     cwd, wt = prepare_workspace(spec)
     assert cwd == repo
     assert wt is None
+
+
+def test_worktree_prefers_local_base_when_origin_is_behind(tmp_path):
+    """Branching from origin/<base> is right when the local checkout is
+    stale, and wrong when it is ahead: the unpushed commits are exactly the
+    work the run was launched to build on."""
+    clone, origin = _make_origin_repo(tmp_path)
+    # The clone fetches, then commits work it never pushes.
+    _git(clone, "fetch", "origin", "main")
+    _git(clone, "merge", "--ff-only", "origin/main")
+    (clone / "local-only.txt").write_text("unpushed")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", "local work")
+
+    wt = Worktree(repo=clone, branch="setpoint/test", base="main")
+    path = wt.create()
+    assert (path / "local-only.txt").exists(), "unpushed local work was discarded"
+    assert wt.base_ref == "main"
+    wt.cleanup()

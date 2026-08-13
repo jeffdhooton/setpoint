@@ -56,6 +56,32 @@ class Worktree:
             print(f"setpoint: origin/{self.base} does not resolve in {self.repo} "
                   f"— branching from local HEAD instead", file=sys.stderr)
             return "HEAD"
+
+        # origin/<base> is the right start point only when the local base is
+        # stale (the failure this guards). When local is AHEAD, those unpushed
+        # commits are usually the very work the run was launched to build on —
+        # branching from origin would silently discard them, and the agent
+        # would build against a tree that is missing files it was told to read.
+        local = subprocess.run(
+            ["git", "rev-parse", "--verify", self.base],
+            cwd=self.repo, capture_output=True, text=True,
+        )
+        if local.returncode == 0:
+            origin_is_ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", f"origin/{self.base}", self.base],
+                cwd=self.repo, capture_output=True, text=True,
+            ).returncode == 0
+            if origin_is_ancestor:
+                ahead = subprocess.run(
+                    ["git", "rev-list", "--count", f"origin/{self.base}..{self.base}"],
+                    cwd=self.repo, capture_output=True, text=True,
+                ).stdout.strip() or "0"
+                if ahead != "0":
+                    print(f"setpoint: local {self.base} is {ahead} commit(s) ahead of "
+                          f"origin/{self.base} — branching from the local branch so "
+                          f"unpushed work is not lost. Push {self.base} if you meant "
+                          f"the remote state.", file=sys.stderr)
+                return self.base
         return f"origin/{self.base}"
 
     def create(self) -> Path:
