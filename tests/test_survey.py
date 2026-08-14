@@ -92,3 +92,13 @@ def test_no_tasks_without_a_survey_is_still_a_plain_error(tmp_path):
     with pytest.raises(ValueError, match="no tasks"):
         decompose(str(idea), str(repo), ["claude"], str(tmp_path / "out2"),
                   oneshot=fake_oneshot)
+
+
+def test_survey_is_on_by_default_and_opt_out_is_explicit():
+    """Surveying must be what happens when nobody thinks about it. The person
+    who skipped the check last time was the operator, not the tool."""
+    from setpoint.__main__ import survey_requested
+    assert survey_requested([]) is True
+    assert survey_requested(["--repo", "/x"]) is True
+    assert survey_requested(["--no-survey"]) is False
+    assert survey_requested(["--survey"]) is True

@@ -49,6 +49,13 @@ def verify_contract_block(spec) -> str:
     return _VERIFY_CONTRACT.format(commands="\n".join(lines) + "\n")
 
 
+def survey_requested(opts: list[str]) -> bool:
+    """Survey unless explicitly refused. Planning against a stale premise cost
+    a real fleet 2.5 hours across five agents; the default has to be the safe
+    one, because the operator is exactly who forgets to ask."""
+    return "--no-survey" not in opts
+
+
 def _build_executor(spec):
     engine = spec.execute.engine
     if engine == "claude":
@@ -257,7 +264,7 @@ def cmd_fleet(rest: list[str]) -> int:
         idea = args[0]
         opts = args[1:]
         known_flags = ("--repo", "--engines", "--out", "--checks", "--survey-engine")
-        BARE_FLAGS = ("--survey",)
+        BARE_FLAGS = ("--survey", "--no-survey")
         values: dict[str, str] = {}
         i = 0
         while i < len(opts):
@@ -300,7 +307,7 @@ def cmd_fleet(rest: list[str]) -> int:
         # Survey first when asked: plan against the repo, not against an idea
         # file that may describe work someone finished a month ago.
         survey_text = None
-        if "--survey" in opts:
+        if survey_requested(opts):
             from setpoint.survey import survey as _survey
             print("fleet plan: surveying the repo before planning "
                   "(read-only; this takes a few minutes)...")
