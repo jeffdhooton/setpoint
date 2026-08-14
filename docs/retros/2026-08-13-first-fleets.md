@@ -79,10 +79,10 @@ run logs, and the operating session's own notes.
 
 ## Protocol skill (room-worker)
 
-18. **Iteration amnesia.** Workers re-read SKILL.md and re-oriented each
+18. **Iteration amnesia.** **FIXED** — room-worker orientation cache (dotfiles f07306a). Workers re-read SKILL.md and re-oriented each
     iteration; one re-hit a permission block a prior iteration had
     cleared. Carry a per-run orientation cache into the prompt.
-19. **PR etiquette** — see 6: skill says request review then open PR;
+19. **PR etiquette** **FIXED** — skill stops at review-request; deliver owns the PR (dotfiles f07306a). — see 6: skill says request review then open PR;
     with deliver in the picture the skill should stop at review-request.
 
 ## Already fixed during the runs
