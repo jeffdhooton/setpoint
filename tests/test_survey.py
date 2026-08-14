@@ -102,3 +102,19 @@ def test_survey_is_on_by_default_and_opt_out_is_explicit():
     assert survey_requested(["--repo", "/x"]) is True
     assert survey_requested(["--no-survey"]) is False
     assert survey_requested(["--survey"]) is True
+
+
+def test_repo_defaults_to_cwd():
+    """--repo is the odd one out: the answer is almost always 'here'. Making
+    it required meant every invocation restated what the shell already knew."""
+    from setpoint.__main__ import resolve_repo_arg
+    import os
+    here = os.getcwd()
+    assert resolve_repo_arg(None) == here
+    assert resolve_repo_arg("/tmp") == "/tmp"
+
+
+def test_repo_accepts_several_for_a_cross_repo_fleet():
+    from setpoint.__main__ import resolve_repo_arg
+    got = resolve_repo_arg("/tmp,/var/tmp")
+    assert got == "/tmp"          # the first is the fleet's room repo

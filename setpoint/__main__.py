@@ -49,6 +49,21 @@ def verify_contract_block(spec) -> str:
     return _VERIFY_CONTRACT.format(commands="\n".join(lines) + "\n")
 
 
+def resolve_repo_arg(value: str | None) -> str:
+    """The repo a fleet targets. Defaults to the current directory, because
+    that is the answer nearly every time and the shell already knows it.
+
+    A comma-separated list is accepted and the FIRST entry wins: it becomes
+    the fleet's room repo. Members can each target their own repo (every
+    member spec carries its own workspace.repo), but `fleet plan` decomposes
+    against one, so the rest are ignored here rather than silently misused.
+    """
+    if not value:
+        return str(Path.cwd())
+    first = value.split(",")[0].strip()
+    return str(Path(first).expanduser())
+
+
 def survey_requested(opts: list[str]) -> bool:
     """Survey unless explicitly refused. Planning against a stale premise cost
     a real fleet 2.5 hours across five agents; the default has to be the safe
@@ -283,10 +298,19 @@ def cmd_fleet(rest: list[str]) -> int:
                 print(f"fleet plan: unknown flag {tok}", file=sys.stderr)
                 return 2
             i += 1
-        repo = values.get("--repo")
-        if not repo:
-            print("setpoint fleet plan: --repo is required", file=sys.stderr)
+        raw_repo = values.get("--repo")
+        repo = resolve_repo_arg(raw_repo)
+        if raw_repo and "," in raw_repo:
+            extra = [r.strip() for r in raw_repo.split(",")[1:] if r.strip()]
+            print(f"fleet plan: planning against {repo}; ignoring {', '.join(extra)} "
+                  f"— a fleet decomposes against one repo. Point each member's "
+                  f"workspace.repo at another repo by hand if you need a "
+                  f"cross-repo fleet.", file=sys.stderr)
+        if not Path(repo).is_dir():
+            print(f"setpoint fleet plan: no such directory: {repo}", file=sys.stderr)
             return 2
+        if not raw_repo:
+            print(f"fleet plan: using the current directory as the repo: {repo}")
         engines = (values.get("--engines") or "claude").split(",")
         unknown = set(engines) - VALID_ENGINES
         if unknown:
