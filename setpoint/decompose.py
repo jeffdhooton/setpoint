@@ -47,13 +47,19 @@ Rules:
 - Task names are kebab-case slugs, unique.
 
 Repository: {repo}
-
+{survey_block}
 Idea:
 {idea}
 
 Respond with ONLY a JSON object (fenced or bare) of the shape:
 {{"tasks": [{{"name", "title", "goal", "interfaces", "depends_on", "depends_on_reason", "verify_command", "engine"}}]}}
 """
+
+
+class NothingLeftToBuild(Exception):
+    """The survey found the proposed work already exists, so there is nothing
+    to plan. This is a SUCCESS: catching a stale premise before a fleet runs
+    is the entire reason the survey exists."""
 
 
 def _default_oneshot(engine: str, prompt: str, cwd: str | None = None) -> str:
@@ -321,7 +327,7 @@ def _parallelism_lines(tasks: list[dict]) -> list[str]:
 
 def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
               oneshot=None, repo_checks: str | None = None,
-              base: str | None = None) -> Path:
+              base: str | None = None, survey_text: str | None = None) -> Path:
     oneshot = oneshot or _default_oneshot
     # Absolutize here, at the single entry point, so every downstream
     # consumer (member specs' workspace.repo, fleet.yaml's room.repo) gets an
@@ -332,9 +338,29 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
     idea = Path(idea_path).read_text()
     name = Path(idea_path).stem
 
+    # A survey of what already exists outranks the idea file. The idea is a
+    # proposal; the survey is the repo. Plan against the repo.
+    survey_block = ""
+    if survey_text and survey_text.strip():
+        survey_block = (
+            "\nWHAT IS ALREADY TRUE IN THIS REPO (a read-only survey run just now).\n"
+            "This outranks the idea below. Do NOT create a task for anything the\n"
+            "survey reports as already built — re-planning finished work is the\n"
+            "most expensive mistake available here. If the survey says most of the\n"
+            "idea already exists, return only the tasks that are genuinely left,\n"
+            "and return an empty task list rather than inventing work.\n\n"
+            + survey_text.strip() + "\n")
+
     raw = oneshot(engines[0], DECOMPOSE_PROMPT.format(
-        engines=", ".join(engines), repo=repo, idea=idea))
+        engines=", ".join(engines), repo=repo, idea=idea,
+        survey_block=survey_block))
     tasks = _extract_json(raw)["tasks"]
+    if not tasks and survey_text:
+        raise NothingLeftToBuild(
+            "the survey found nothing left to build — every part of this idea "
+            "already exists in the repo. Re-scope the idea or drop it; do not "
+            "launch a fleet. The survey is in the bundle if you want to check it.")
+
     _validate(tasks, engines)
 
     # A single-engine fleet cannot cross-review: maker == checker for every

@@ -256,7 +256,8 @@ def cmd_fleet(rest: list[str]) -> int:
         from setpoint.spec import VALID_ENGINES
         idea = args[0]
         opts = args[1:]
-        known_flags = ("--repo", "--engines", "--out", "--checks")
+        known_flags = ("--repo", "--engines", "--out", "--checks", "--survey-engine")
+        BARE_FLAGS = ("--survey",)
         values: dict[str, str] = {}
         i = 0
         while i < len(opts):
@@ -267,6 +268,9 @@ def cmd_fleet(rest: list[str]) -> int:
                     return 2
                 values[tok] = opts[i + 1]
                 i += 2
+                continue
+            if tok in BARE_FLAGS:  # valueless switches
+                i += 1
                 continue
             if tok.startswith("--"):
                 print(f"fleet plan: unknown flag {tok}", file=sys.stderr)
@@ -293,8 +297,38 @@ def cmd_fleet(rest: list[str]) -> int:
                 print("fleet plan: no repo check command detected — member gates will "
                       "be the task commands only. Pass --checks '<cmd>' to add the "
                       "repo's required check.", file=sys.stderr)
-        fleet_path = decompose(idea, repo, engines, out, repo_checks=checks or None)
+        # Survey first when asked: plan against the repo, not against an idea
+        # file that may describe work someone finished a month ago.
+        survey_text = None
+        if "--survey" in opts:
+            from setpoint.survey import survey as _survey
+            print("fleet plan: surveying the repo before planning "
+                  "(read-only; this takes a few minutes)...")
+            try:
+                survey_text = _survey(Path(idea).read_text(), repo,
+                                      engine=values.get("--survey-engine") or engines[0])
+            except Exception as e:
+                print(f"fleet plan: survey failed ({e}) — planning without it. "
+                      f"Check the plan against the repo yourself.", file=sys.stderr)
+                survey_text = None
+
+        from setpoint.decompose import NothingLeftToBuild
+        try:
+            fleet_path = decompose(idea, repo, engines, out,
+                                   repo_checks=checks or None,
+                                   survey_text=survey_text)
+        except NothingLeftToBuild as e:
+            # Not a failure. The survey did its job before any agent ran.
+            Path(out).mkdir(parents=True, exist_ok=True)
+            (Path(out) / "survey.md").write_text(survey_text or "")
+            print(f"\nfleet plan: NOTHING TO BUILD — {e}")
+            print(f"survey written to {Path(out) / 'survey.md'}")
+            return 0
         print(f"fleet bundle written to {fleet_path.parent}")
+        if survey_text:
+            (fleet_path.parent / "survey.md").write_text(survey_text)
+            print("  survey written to survey.md — READ IT FIRST; if it says the "
+                  "work already exists, drop the fleet rather than running it")
 
         # Say the shape of the fan-out at the CLI, not only in plan.md. A
         # near-serial fleet is the one thing worth knowing before approving,
