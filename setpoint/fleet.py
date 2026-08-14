@@ -663,44 +663,16 @@ def _close_the_loop(fs, room, room_id, results):
                   file=sys.stderr)
         reconciled.append((t.get("title", t["id"]), t.get("status"), final))
 
-    needs_human = []
-    if prs:
-        needs_human.append(f"review and merge: {', '.join(prs)}")
-    for title, was, final in reconciled:
-        if final == "abandoned":
-            needs_human.append(f"abandoned task needs a decision or a next wave: {title}")
     # A member that committed nothing is a different failure from one that
     # built 3,000 lines and tripped its gate; both used to report "stopped".
     repo = Path(fs.room["repo"]) if fs.room else None
     no_work = []
     if repo is not None:
         for member in sorted(results):
-            n = branch_commit_count(repo, f"setpoint/{member}", "HEAD")
-            if n == 0:
+            if branch_commit_count(repo, f"setpoint/{member}", "HEAD") == 0:
                 no_work.append(member)
-    for member in no_work:
-        needs_human.append(f"member '{member}' committed NOTHING — it burned its "
-                           f"iterations without producing work; read its log before "
-                           f"re-running")
 
-    for member, st in sorted(results.items()):
-        if st == UNREVIEWED:
-            needs_human.append(f"member '{member}' passed its gate but was never "
-                               f"cross-reviewed — review the diff yourself")
-        elif st == CHANGES_REQUESTED:
-            needs_human.append(f"member '{member}' has unresolved review findings — "
-                               f"read the review thread before merging")
-        elif st == GATE_PASSED:
-            needs_human.append(f"member '{member}' passed its gate but its reviewer "
-                               f"never rendered a verdict — the review is unresolved")
-        elif st == "completed-capped":
-            needs_human.append(f"member '{member}' verified its own deliverable but the "
-                               f"repo-wide gate is red — confirm the red is pre-existing")
-        elif st not in FLEET_OK:
-            needs_human.append(f"member '{member}' ended '{st}' — read its run log "
-                               f"and the transcript before trusting or discarding its work")
-    if not needs_human:
-        needs_human.append("nothing — every member was reviewed, approved and delivered")
+    needs_human = _needs_human_lines(results, prs, reconciled, no_work)
 
     body = ("FLEET CLOSED — " + fs.name + "\n\n"
             + "Member outcomes:\n"
@@ -805,6 +777,52 @@ def branch_commit_count(repo: Path, branch: str, base: str) -> int | None:
         return int((proc.stdout or "").strip())
     except ValueError:
         return None
+
+
+def _needs_human_lines(results: dict, prs: list, reconciled: list,
+                       no_work: list) -> list[str]:
+    """The "needs a human" list, grouped by reason.
+
+    Ungrouped, this emitted one near-identical line per member — five copies
+    of "abandoned task needs a decision or a next wave" and four of "ended
+    'stopped' — read its run log" — which buries the one line that differs.
+    One line per reason, members named on it.
+    """
+    lines: list[str] = []
+    if prs:
+        lines.append(f"review and merge: {', '.join(prs)}")
+
+    abandoned = [title for title, _was, final in reconciled if final == "abandoned"]
+    if abandoned:
+        lines.append(f"{len(abandoned)} abandoned task(s) need a decision or a next "
+                     f"wave: {', '.join(abandoned)}")
+    if no_work:
+        lines.append(f"{len(no_work)} member(s) committed NOTHING — they burned their "
+                     f"iterations without producing work: {', '.join(sorted(no_work))}")
+
+    # Group members by the reason they need attention.
+    by_reason: dict[str, list[str]] = {}
+    for member, st in sorted(results.items()):
+        if st == UNREVIEWED:
+            reason = "passed their gate but were never cross-reviewed — review the diffs"
+        elif st == CHANGES_REQUESTED:
+            reason = "have unresolved review findings — read the review thread before merging"
+        elif st == GATE_PASSED:
+            reason = "passed their gate but no reviewer rendered a verdict"
+        elif st == "completed-capped":
+            reason = "verified their own deliverable but the repo-wide gate is red — confirm it is pre-existing"
+        elif st not in FLEET_OK:
+            reason = f"ended '{st}' — read the run log and transcript before trusting the work"
+        else:
+            continue
+        by_reason.setdefault(reason, []).append(member)
+
+    for reason, members in by_reason.items():
+        lines.append(f"member(s) {', '.join(members)} {reason}")
+
+    if not lines:
+        lines.append("nothing — every member was reviewed, approved and delivered")
+    return lines
 
 
 def _fleets_dir(runs_root: Path) -> Path:

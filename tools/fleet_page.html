@@ -100,22 +100,44 @@ h2 .n{color:var(--t2);font-weight:400}
   -webkit-mask-image:linear-gradient(#000 72%,transparent)}
 .expand{cursor:pointer;color:var(--handoff);font-size:11.5px;margin-top:4px;display:inline-block}
 #follow{position:fixed;right:24px;bottom:24px;z-index:6}
+
+/* ---- fleet switcher ---- */
+#switcher{border-bottom:1px solid var(--line);background:var(--s1);padding:8px 32px 10px}
+.frow{display:flex;align-items:center;gap:10px;min-height:30px}
+.frow+.frow{margin-top:4px;padding-top:4px;border-top:1px solid color-mix(in oklab,var(--line) 45%,transparent)}
+.flabel{font-size:9.5px;color:var(--t2);letter-spacing:.14em;text-transform:uppercase;
+  width:52px;flex:none;text-align:right}
+.fgroup{display:flex;gap:6px;align-items:center}
+.fspacer{flex:1}
+/* An action is not a filter and must not look like one. */
+.chip.action{border-style:dashed;color:var(--t2)}
+.chip.action:hover{color:var(--t0);border-color:var(--t2)}
+.empty-note{font-size:11.5px;color:var(--t2);font-style:italic}
 </style></head><body>
 <header>
   <div><h1><span class="live"></span><span id="h-fleet">fleet</span></h1>
     <div id="h-dir" style="font-size:10.5px;color:var(--t2);margin-top:2px"></div></div>
-  <div class="hcount"><span class="n" id="h-agents">–</span><span class="k">in the office</span></div>
+  <div class="hcount"><span class="n" id="h-agents">–</span><span class="k" id="h-agents-k">in the office</span></div>
   <div class="hero">
-    <div class="tile"><div class="v" id="h-done">–</div><div class="k">tasks done</div></div>
+    <div class="tile"><div class="v" id="h-done">–</div><div class="k" id="h-done-k">board done</div></div>
     <div class="tile"><div class="v" id="h-msgs">–</div><div class="k">messages</div></div>
-    <div class="tile"><div class="v" id="h-elapsed">–</div><div class="k">elapsed</div></div>
+    <div class="tile"><div class="v" id="h-elapsed">–</div><div class="k" id="h-elapsed-k">elapsed</div></div>
   </div></header>
-<div id="switcher" style="border-bottom:1px solid var(--line);padding:9px 32px;
-  display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:var(--s1)">
-  <span style="font-size:10px;color:var(--t2);letter-spacing:.12em">FLEETS</span>
-  <div id="f-status" style="display:flex;gap:6px"></div>
-  <div id="f-project" style="display:flex;gap:6px"></div>
-  <div id="fleet-tabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+<div id="switcher">
+  <div class="frow">
+    <span class="flabel">status</span>
+    <div id="f-status" class="fgroup"></div>
+    <div class="fspacer"></div>
+    <div id="f-actions" class="fgroup"></div>
+  </div>
+  <div class="frow" id="project-row">
+    <span class="flabel">project</span>
+    <div id="f-project" class="fgroup"></div>
+  </div>
+  <div class="frow">
+    <span class="flabel">fleet</span>
+    <div id="fleet-tabs" class="fgroup" style="flex-wrap:wrap"></div>
+  </div>
 </div><div id="err"></div>
 <main>
 <div id="closed-banner" style="display:none;background:var(--s1);border:1px solid var(--good);
@@ -192,6 +214,20 @@ function doing(p){
     if(p.status==="running")return['var(--warn)',`at work · iteration ${p.iters+1}`];
     if(ts==="in_progress")return['var(--warn)',"at work"];
     if(ts==="claimed")return['var(--warn)',"getting started"];
+    // Terminal statuses. Without these every member of a CLOSED fleet read
+    // "waiting to start", which is the opposite of what happened.
+    const TERM={
+      "review-approved":['var(--good)',"approved"],
+      "completed-capped":['var(--good)',"done · repo gate red, not its fault"],
+      "unreviewed":['var(--warn)',"done · never reviewed"],
+      "gate-passed":['var(--warn)',"gate passed · review unresolved"],
+      "changes-requested":['var(--review)',"changes requested"],
+      "stopped":['var(--bad)',"stopped · out of iterations"],
+      "budget_exhausted":['var(--bad)',"stopped · out of budget"],
+      "gate_error":['var(--bad)',"gate could not run"],
+      "skipped":['var(--line)',"skipped"],
+    };
+    if(TERM[p.status])return TERM[p.status];
     return['var(--line)',"waiting to start"];
   }
   if(p.status==="visiting"){
@@ -225,7 +261,11 @@ function renderFloor(m,s){
   }).join("");
   const active=m.people.filter(p=>p.status==="running"||p.status==="visiting"||
     (p.resident&&p.task&&["in_progress","claimed","review"].includes(p.task.status))).length;
-  el("h-agents").textContent=active;
+  const residents=m.people.filter(p=>p.resident).length;
+  // The headline is the roster. Claiming "0 in the office" while five desks
+  // are drawn below it is just wrong.
+  el("h-agents").textContent=active?active:residents;
+  el("h-agents-k").textContent=active?"at work now":`member${residents===1?"":"s"} · none at work`;
 }
 
 function renderConvos(m){
@@ -241,7 +281,9 @@ function renderConvos(m){
       <span class="${live?"live-tag":"idle-tag"}">${live?"● talking now":rel(new Date(e.last).toISOString())}</span></div>`;
   });
   el("convo-n").textContent=rows.length?`· ${rows.length}`:"";
-  el("convos").innerHTML=rows.join("")||`<div class="convo" style="color:var(--t2)">quiet so far</div>`;
+  el("convos").innerHTML=rows.join("")||
+    `<div class="convo" style="color:var(--t2)">no agent-to-agent threads — every message
+     was a status post from the orchestrator</div>`;
 }
 
 function pill(st){return `<span class="pill ${st}">${ICON[st]||"·"} ${st}</span>`}
@@ -252,8 +294,14 @@ async function refresh(){
   else if(s.version!==version) location.reload();
   el("h-msgs").textContent=s.messages.length;
   const t0=s.messages.length?Date.parse(s.messages[0].created_at)/1000:s.started;
-  el("h-elapsed").textContent=fmtEl(Date.now()/1000-t0);
-  el("h-done").textContent=`${s.board.filter(t=>t.status==="done").length}/${s.board.length}`;
+  const ended=!!s.outcome;
+  const tEnd=(ended&&s.messages.length)?Date.parse(s.messages[s.messages.length-1].created_at)/1000
+                                       :Date.now()/1000;
+  el("h-elapsed").textContent=fmtEl(tEnd-t0);
+  el("h-elapsed-k").textContent=ended?"ran for":"elapsed";
+  const done=s.board.filter(t=>t.status==="done").length;
+  el("h-done").textContent=`${done}/${s.board.length}`;
+  el("h-done-k").textContent="board done";
   if(s.outcome){el("closed-banner").style.display="block";
     el("closed-body").textContent=s.outcome;
     el("closed-banner").style.borderColor=/Needs a human:?\n- nothing/i.test(s.outcome)?"var(--good)":"var(--warn)";
@@ -319,10 +367,16 @@ async function loadTabs(){
   const projects=[...new Set(fl.map(f=>f.project))];
   el("f-status").innerHTML=
     [["all","all"],["live","● in progress"],["done","finished"],["archived","archived"]].map(([k,label])=>
-      `<span class="chip ${fStatus===k?"on":""}" data-fs="${k}">${label}</span>`).join("")
-    +`<span class="chip" id="clear-done" title="Archive every fleet that is not running. Nothing is deleted — transcripts stay on disk.">clear finished</span>`;
-  el("f-project").innerHTML=projects.length>1?["all",...projects].map(pr=>
-    `<span class="chip ${fProject===pr?"on":""}" data-fp="${pr}">${pr}</span>`).join(""):"";
+      `<span class="chip ${fStatus===k?"on":""}" data-fs="${k}">${label}</span>`).join("");
+  // The action lives away from the filters, and only appears when it would
+  // actually do something.
+  const finishable=fl.filter(f=>!f.active&&!f.archived).length;
+  el("f-actions").innerHTML=finishable
+    ? `<span class="chip action" id="clear-done" title="Archive every fleet that is not running. Nothing is deleted — transcripts stay on disk.">archive ${finishable} finished</span>`
+    : "";
+  el("f-project").innerHTML=["all",...projects].map(pr=>
+    `<span class="chip ${fProject===pr?"on":""}" data-fp="${pr}">${pr}</span>`).join("");
+  el("project-row").style.display=projects.length>1?"flex":"none";
   const show=fl.filter(f=>
     (fStatus==="all"?!f.archived:
      fStatus==="archived"?f.archived:
@@ -336,10 +390,11 @@ async function loadTabs(){
        ${f.active?"":`<span class="arch" data-arch="${f.name}" data-want="${f.archived?0:1}"
          title="${f.archived?"Restore to the list":"Archive — hide from this view, keep on disk"}"
          style="margin-left:8px;opacity:.5;cursor:pointer">${f.archived?"↩":"×"}</span>`}</span>`).join("")
-    ||`<span style="font-size:11.5px;color:var(--t2)">no fleets match</span>`;
+    ||`<span class="empty-note">nothing ${fStatus==="archived"?"archived":
+        fStatus==="live"?"running right now":"matches these filters"}</span>`;
   document.querySelectorAll("#f-status .chip[data-fs]").forEach(c=>c.onclick=()=>{
     fStatus=c.dataset.fs;localStorage.setItem("f-status",fStatus);loadTabs()});
-  el("clear-done").onclick=archiveFinished;
+  if(el("clear-done")) el("clear-done").onclick=archiveFinished;
   document.querySelectorAll(".arch").forEach(c=>c.onclick=ev=>{
     ev.preventDefault();ev.stopPropagation();
     archive([c.dataset.arch],c.dataset.want==="1")});

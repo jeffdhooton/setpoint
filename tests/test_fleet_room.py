@@ -596,3 +596,27 @@ def test_room_context_freezes_the_git_discipline_rule(tmp_path):
     g = goals["api"]
     assert "git stash" in g and "git reset" in g
     assert "--hard" in g or "never" in g.lower()
+
+
+def test_needs_human_groups_identical_reasons(tmp_path):
+    """The closing banner repeated 'abandoned task needs a decision' five
+    times and 'ended stopped — read its run log' four times, nearly word for
+    word. Group them: one line per reason, members listed."""
+    from setpoint.fleet import _needs_human_lines
+    lines = _needs_human_lines(
+        results={"a": "stopped", "b": "stopped", "c": "stopped",
+                 "d": "changes-requested", "e": "review-approved"},
+        prs=["https://github.com/x/y/pull/1"],
+        reconciled=[("Task A", "open", "abandoned"), ("Task B", "open", "abandoned"),
+                    ("Task C", "open", "abandoned")],
+        no_work=[],
+    )
+    body = "\n".join(lines)
+    # One grouped line for the abandoned tasks, not three.
+    assert sum(1 for l in lines if "abandoned" in l) == 1
+    assert "Task A" in body and "Task C" in body
+    # One grouped line for the three stopped members, not three.
+    stopped = [l for l in lines if "stopped" in l]
+    assert len(stopped) == 1
+    assert "a, b, c" in stopped[0]
+    assert len(lines) < 6, f"still verbose: {lines}"
