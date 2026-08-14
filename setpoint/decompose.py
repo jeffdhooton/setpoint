@@ -24,9 +24,17 @@ Rules:
   producing task's "interfaces" field concretely enough to negotiate from.
 - Every task needs a deterministic verify_command that exits 0 on success,
   runnable from the repo root. Make it the NARROWEST command that proves THIS
-  task's deliverable — ideally a single test file. Do NOT include the repo's
-  full test/build/lint command: that is run separately as a second, broader
-  gate, and duplicating it here makes every iteration pay for the whole suite.
+  task's deliverable. Do NOT include the repo's full test/build/lint command:
+  that is run separately as a second, broader gate, and duplicating it here
+  makes every iteration pay for the whole suite.
+- CRITICAL: the verify_command must NOT name a test file that does not exist
+  yet. The implementer decides where its tests belong, and a repo with several
+  test projects (unit vs integration vs worker/binding suites) has more than
+  one correct home — a gate pointing at the wrong one can never go green no
+  matter how good the work is, and the whole iteration budget burns on it.
+  Name an EXISTING runnable target instead: a package/workspace test script, a
+  test project, or an existing directory. Prefer the smallest such target that
+  covers this task's area.
 - Assign each task an engine from this list, spreading work across them: {engines}
 - Task names are kebab-case slugs, unique.
 
