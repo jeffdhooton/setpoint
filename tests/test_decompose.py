@@ -299,3 +299,18 @@ def test_plan_md_flags_an_unjustified_edge(tmp_path):
     plan = (fleet_yaml.parent / "plan.md").read_text()
     # b depends on a but never says what it reads -> candidate false edge.
     assert "UNJUSTIFIED" in plan
+
+
+def test_member_specs_stop_on_no_progress(tmp_path):
+    """Four members once burned all six iterations against identical gate
+    feedback. Raising max_iters would only double the waste; stopping when
+    nothing changes surfaces the problem at iteration 3 instead."""
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot)
+    member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
+    assert member["stop"]["no_progress_after"] == 3
+    assert member["stop"]["max_iters"] >= 6

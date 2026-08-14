@@ -262,7 +262,11 @@ def _member_spec(t: dict, repo: str, repo_checks: str | None = None,
                       **({"prepare": prepare} if prepare else {})},
         "execute": {"engine": t["engine"]},
         "verify": verify,
-        "stop": {"max_iters": 6},
+        # no_progress_after matters more than max_iters. Four members once
+        # burned all six iterations against byte-identical gate feedback;
+        # raising the cap would have doubled the waste. Stopping when nothing
+        # changes surfaces a broken gate at iteration 3 instead of 6.
+        "stop": {"max_iters": 8, "no_progress_after": 3},
         # Must be truthy: run_loop only calls deliver() when
         # `getattr(spec, "deliver", None)` is truthy (spec.py / __main__.py
         # run_loop), so an empty {} here would silently skip commit/push/PR
