@@ -11,6 +11,44 @@ def _runs_root() -> Path:
     return Path(os.environ.get("SETPOINT_RUNS_ROOT", str(Path.home() / ".setpoint" / "runs")))
 
 
+_VERIFY_CONTRACT = """
+
+HOW YOUR WORK IS VERIFIED — this is the contract, read it literally.
+When you believe you are done, exactly these commands are run in your
+worktree, and only their exit status decides whether you passed:
+
+{commands}
+Satisfy them verbatim. If a command greps for a string or runs a test by
+name, that exact string or name must exist — choosing a better name still
+fails. If you think a command is wrong, satisfy it anyway and say so in your
+final summary; you cannot edit it.
+"""
+
+
+def verify_contract_block(spec) -> str:
+    """The verify commands, rendered for the agent's own prompt.
+
+    A gate the worker cannot read is not a gate, it is a trap: across two
+    fleets, nine members implemented the right behavior, named it sensibly,
+    and were refused by a command string they were never shown. The gate is a
+    contract, so it travels with the goal.
+    """
+    verify = getattr(spec, "verify", None)
+    if verify is None:
+        return ""
+    lines = []
+    scoped = getattr(verify, "scoped_command", None)
+    if scoped:
+        lines.append(f"  1. your task's gate:  {scoped}")
+    if getattr(verify, "command", None):
+        n = len(lines) + 1
+        label = "the repo-wide gate" if scoped else "your gate"
+        lines.append(f"  {n}. {label}:  {verify.command}")
+    if not lines:
+        return ""
+    return _VERIFY_CONTRACT.format(commands="\n".join(lines) + "\n")
+
+
 def _build_executor(spec):
     engine = spec.execute.engine
     if engine == "claude":
@@ -82,6 +120,9 @@ def run_loop(spec, *, fresh: bool = False, ui=None, abort_check=None,
             f"{wt.port_base}. Any server you start must bind {wt.port_base} or "
             f"above (the value is also in .setpoint-ports.env). Never reuse a "
             f"default port — a sibling worktree is running the same stack.")
+
+    # The gate is a contract; the worker has to be able to read it.
+    spec.goal += verify_contract_block(spec)
 
     gate = build_gate(spec, judge_client=judge_client, env=gate_env)
     scoped_gate = build_scoped_gate(spec, env=gate_env)

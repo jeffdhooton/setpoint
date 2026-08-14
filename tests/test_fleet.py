@@ -353,3 +353,48 @@ def test_prune_is_a_dry_run_unless_confirmed(tmp_path):
     assert [f["name"] for f in removed] == ["ancient"]
     assert not old.exists()
     assert (runs.parent / "fleets" / "recent").exists()
+
+
+def test_goal_carries_the_verify_contract(tmp_path):
+    """The gate is a contract the worker must satisfy, so the worker has to be
+    able to read it. Nine members across two fleets implemented the right
+    behavior and were refused by a command they never saw."""
+    from setpoint.__main__ import verify_contract_block
+    from types import SimpleNamespace
+    spec = SimpleNamespace(verify=SimpleNamespace(
+        command="pnpm bar", scoped_command="vitest run x && grep -rq 'payor rule config' src"))
+    block = verify_contract_block(spec)
+    assert "pnpm bar" in block
+    assert "payor rule config" in block
+    assert "verbatim" in block.lower() or "exactly" in block.lower()
+
+
+def test_verify_contract_block_is_empty_without_a_command_gate(tmp_path):
+    from setpoint.__main__ import verify_contract_block
+    from types import SimpleNamespace
+    spec = SimpleNamespace(verify=SimpleNamespace(command=None, scoped_command=None))
+    assert verify_contract_block(spec) == ""
+
+
+def test_member_commit_count_distinguishes_no_work_from_stopped(tmp_path):
+    """A member that wrote nothing and a member carrying 3,000 lines both
+    reported 'stopped'. The outcome must tell them apart."""
+    import subprocess
+    from setpoint.fleet import branch_commit_count
+    repo = tmp_path / "r"
+    repo.mkdir()
+    for a in (["init", "-q", "--initial-branch=main"], ["config", "user.email", "t@t"],
+              ["config", "user.name", "t"]):
+        subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+    (repo / "f").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "empty"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-qb", "worked"], cwd=repo, check=True, capture_output=True)
+    (repo / "g").write_text("y")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "work"], cwd=repo, check=True, capture_output=True)
+
+    assert branch_commit_count(repo, "worked", "main") == 1
+    assert branch_commit_count(repo, "empty", "main") == 0
+    assert branch_commit_count(repo, "nope", "main") is None

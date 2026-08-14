@@ -98,6 +98,31 @@ def detect_repo_checks(repo: Path) -> str | None:
     return f"npm run {name}"
 
 
+def detect_default_branch(repo: Path) -> str:
+    """The branch members should branch from and PR into.
+
+    `deliver.base` used to default to "main", which is wrong for any repo that
+    integrates elsewhere: program-health's `develop` was 23 commits ahead of
+    main, so an unfixed fleet would have cut every worktree from a stale trunk
+    and aimed every PR at the wrong branch. Prefer the remote's declared HEAD,
+    then a local `develop`, then whatever HEAD is on."""
+    head = subprocess.run(["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                          cwd=repo, capture_output=True, text=True)
+    if head.returncode == 0 and head.stdout.strip():
+        return head.stdout.strip().rsplit("/", 1)[-1]
+    for candidate in ("develop", "main", "master"):
+        got = subprocess.run(["git", "rev-parse", "--verify", f"origin/{candidate}"],
+                             cwd=repo, capture_output=True, text=True)
+        if got.returncode == 0:
+            return candidate
+    # symbolic-ref, not rev-parse: on a repo with no commits yet rev-parse
+    # answers the literal string "HEAD", which is not a branch name.
+    cur = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
+                         cwd=repo, capture_output=True, text=True)
+    name = (cur.stdout or "").strip()
+    return name if name and name != "HEAD" else "main"
+
+
 def detect_prepare(repo: Path) -> str | None:
     """The command that makes a *fresh worktree* buildable, or None.
 
@@ -153,7 +178,7 @@ def _validate(tasks: list[dict], engines: list[str]) -> None:
 
 
 def _member_spec(t: dict, repo: str, repo_checks: str | None = None,
-                 prepare: str | None = None) -> dict:
+                 prepare: str | None = None, base: str | None = None) -> dict:
     # With repo checks known, the task's own command becomes the scoped gate
     # (what this worker is responsible for) and the repo's check becomes the
     # broad gate (what the repo requires). Cycle then distinguishes "passed"
@@ -179,7 +204,8 @@ def _member_spec(t: dict, repo: str, repo_checks: str | None = None,
         # push/pr already default True inside deliver() even for an empty
         # dict, so these keys are set explicitly just to keep the dict
         # non-empty/truthy — see setpoint/deliver.py deliver().
-        "deliver": {"push": True, "pr": True},
+        "deliver": {"push": True, "pr": True,
+                    **({"base": base} if base else {})},
     }
 
 
@@ -198,7 +224,8 @@ def _plan_md(idea_name: str, tasks: list[dict]) -> str:
 
 
 def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
-              oneshot=None, repo_checks: str | None = None) -> Path:
+              oneshot=None, repo_checks: str | None = None,
+              base: str | None = None) -> Path:
     oneshot = oneshot or _default_oneshot
     # Absolutize here, at the single entry point, so every downstream
     # consumer (member specs' workspace.repo, fleet.yaml's room.repo) gets an
@@ -223,6 +250,7 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
               file=sys.stderr)
 
     prepare = detect_prepare(Path(repo))
+    base = base or detect_default_branch(Path(repo))
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -232,7 +260,7 @@ def decompose(idea_path: str, repo: str, engines: list[str], out_dir: str,
     members = []
     for t in tasks:
         member = f"{t['name']}.setpoint.yaml"
-        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo, repo_checks, prepare),
+        (out / member).write_text(yaml.safe_dump(_member_spec(t, repo, repo_checks, prepare, base),
                                                  sort_keys=False))
         members.append(f"./{member}")
 

@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -185,6 +186,18 @@ def _report_member_to_room(member_name: str, status: str, room_ctx: dict, room, 
 
     _post("status", f"{member_name}: {status}")
     if status not in ("passed", "completed-capped"):
+        # Tell the dependents. A producer whose gate never goes green never
+        # posts a handoff, so every dependent waits, gives up, and rebuilds the
+        # boundary itself — three of four scry members independently created
+        # the same test file, four of four ops-calendar members rebuilt the
+        # same module. Silence is what makes them duplicate; say it plainly.
+        dependents = room_ctx.get("dependents") or []
+        if dependents:
+            _post("handoff",
+                  f"NO HANDOFF COMING from {member_name}: it ended '{status}'. "
+                  f"Blocked: {', '.join(dependents)}. Do not keep waiting, and do "
+                  f"NOT rebuild its deliverable — say in your own status that you "
+                  f"are blocked on it and work only what you own.")
         return status
 
     # The reviewer was assigned and announced at launch (_post_tasks); use
@@ -344,8 +357,16 @@ def _post_tasks(fs, room, room_id: str) -> dict[str, dict]:
     room.post(room_id, "orchestrator", "status",
              f"fleet {fs.name} launched: {len(tasks)} tasks")
 
-    for ctx in member_room_ctx.values():
+    # Reverse the dependency edges so a failing producer can name exactly who
+    # it just blocked.
+    dependents: dict[str, list[str]] = {}
+    for entry in tasks:
+        for dep in entry.get("depends_on") or []:
+            dependents.setdefault(dep, []).append(entry["member"])
+
+    for name, ctx in member_room_ctx.items():
         ctx["fleet_engines"] = fleet_engines
+        ctx["dependents"] = dependents.get(name, [])
         # Assign the reviewer at plan time, not at review time: a worker that
         # has to find its own reviewer broadcasts and waits.
         reviewer_engine = next((e for e in fleet_engines if e != ctx["engine"]), None)
@@ -475,6 +496,20 @@ def run_fleet(fleet_path: str, *, fresh: bool = False, run_loop=None,
         # still sees a non-None room_id and tears the room down instead of
         # leaking the subprocess.
         if room is not None:
+            # Establish whether the base is already red BEFORE any member runs.
+            # program-health's develop was failing CI when a fleet launched onto
+            # it; every member inherited the failure and nothing said so, which
+            # makes "this worker broke it" indistinguishable from "it arrived
+            # broken".
+            baseline = _baseline_gate(fs)
+            if baseline is not None and not baseline["passed"]:
+                print(f"setpoint fleet: WARNING — the repo-wide gate is ALREADY RED on "
+                      f"the base branch before any member has run:\n"
+                      f"  {baseline['command']}\n"
+                      f"Members cannot be judged against it. Fix the base first, or "
+                      f"read every result as 'red for reasons that predate this fleet'.",
+                      file=sys.stderr)
+
             room_info = room.create_room(run_id=fs.name, repo=fs.room["repo"])
             room_id = room_info["id"]
             member_room_ctx = _post_tasks(fs, room, room_id)
@@ -622,6 +657,20 @@ def _close_the_loop(fs, room, room_id, results):
     for title, was, final in reconciled:
         if final == "abandoned":
             needs_human.append(f"abandoned task needs a decision or a next wave: {title}")
+    # A member that committed nothing is a different failure from one that
+    # built 3,000 lines and tripped its gate; both used to report "stopped".
+    repo = Path(fs.room["repo"]) if fs.room else None
+    no_work = []
+    if repo is not None:
+        for member in sorted(results):
+            n = branch_commit_count(repo, f"setpoint/{member}", "HEAD")
+            if n == 0:
+                no_work.append(member)
+    for member in no_work:
+        needs_human.append(f"member '{member}' committed NOTHING — it burned its "
+                           f"iterations without producing work; read its log before "
+                           f"re-running")
+
     for member, st in sorted(results.items()):
         if st == UNREVIEWED:
             needs_human.append(f"member '{member}' passed its gate but was never "
@@ -705,6 +754,45 @@ def _status_lines(fs, runs_root: Path) -> list[str]:
         else:
             lines.append(f"{name:30} {'pending':20} {0:>6} {'—':>9} {'—':>9}")
     return lines
+
+
+def _baseline_gate(fs) -> dict | None:
+    """Run the members' shared broad gate once against the base checkout, so
+    the fleet knows whether it is starting from green. Returns None when the
+    members do not agree on one broad command (nothing meaningful to check).
+    Best-effort: any failure to even run it yields None rather than blocking
+    the fleet."""
+    from setpoint.spec import load_spec
+
+    try:
+        commands = set()
+        for m in fs.members:
+            spec = load_spec(str(m))
+            if spec.verify.gate == "command" and spec.verify.command:
+                commands.add(spec.verify.command)
+        if len(commands) != 1:
+            return None
+        command = commands.pop()
+        proc = subprocess.run(command, shell=True, cwd=fs.room["repo"],
+                              capture_output=True, text=True, timeout=900)
+        return {"command": command, "passed": proc.returncode == 0}
+    except Exception:
+        return None
+
+
+def branch_commit_count(repo: Path, branch: str, base: str) -> int | None:
+    """Commits on `branch` that are not on `base`, or None if the branch does
+    not exist. A member that committed nothing and one carrying thousands of
+    lines both report 'stopped'; this is what tells them apart."""
+    proc = subprocess.run(
+        ["git", "rev-list", "--count", f"{base}..{branch}"],
+        cwd=repo, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    try:
+        return int((proc.stdout or "").strip())
+    except ValueError:
+        return None
 
 
 def _fleets_dir(runs_root: Path) -> Path:

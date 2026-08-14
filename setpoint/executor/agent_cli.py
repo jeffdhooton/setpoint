@@ -107,6 +107,12 @@ def _codex_parse(stdout: str) -> tuple[str, Usage]:
     text = stdout.strip()
     usage = Usage()
     last = None
+    # The agent's prose arrives on item.completed events nested under "item";
+    # the stream then ends on a turn event carrying usage and no text. Reading
+    # only the final line's top-level keys therefore fell through to the raw
+    # JSONL, which is what landed in every codex member's state.json and made
+    # its log unreadable. Track the last agent message across all lines.
+    agent_text = None
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -115,10 +121,19 @@ def _codex_parse(stdout: str) -> tuple[str, Usage]:
             ev = json.loads(line)
         except (ValueError, json.JSONDecodeError):
             continue
-        if isinstance(ev, dict):
-            last = ev
+        if not isinstance(ev, dict):
+            continue
+        last = ev
+        item = ev.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            if item.get("text"):
+                agent_text = str(item["text"]).strip()
+        for key in ("message", "text", "result"):
+            if ev.get(key):
+                agent_text = str(ev[key]).strip()
+    if agent_text:
+        text = agent_text
     if isinstance(last, dict):
-        text = str(last.get("message") or last.get("text") or last.get("result") or text).strip()
         u = last.get("usage") or {}
         usage = Usage(input_tokens=int(u.get("input_tokens", 0) or 0),
                       output_tokens=int(u.get("output_tokens", 0) or 0))

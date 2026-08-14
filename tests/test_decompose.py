@@ -56,7 +56,8 @@ def test_decompose_writes_bundle(tmp_path):
     # Must be truthy: run_loop gates deliver() on `if getattr(spec, "deliver", None)`,
     # so an empty {} would silently skip commit/push/PR for every fleet member.
     assert spec["deliver"]
-    assert spec["deliver"] == {"push": True, "pr": True}
+    assert spec["deliver"]["push"] is True and spec["deliver"]["pr"] is True
+    assert spec["deliver"]["base"]  # base is always pinned to the repo's trunk
 
     from setpoint.spec import load_spec
     loaded = load_spec(str(out / "build-api.setpoint.yaml"))
@@ -209,3 +210,25 @@ def test_decompose_sets_prepare_on_every_member(tmp_path):
     # A fresh worktree has no node_modules, so without this every gate exits
     # 127 cold and the member dies at preflight.
     assert member["workspace"]["prepare"] == "npm ci"
+
+
+def test_detect_default_branch_prefers_develop_when_it_is_the_remote_head(tmp_path):
+    import subprocess
+    from setpoint.decompose import detect_default_branch
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main"], cwd=repo, check=True, capture_output=True)
+    # No origin at all -> fall back to the local HEAD's branch.
+    assert detect_default_branch(repo) == "main"
+
+
+def test_decompose_sets_deliver_base_from_the_repo(tmp_path):
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot,
+                           base="develop")
+    member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
+    assert member["deliver"]["base"] == "develop"

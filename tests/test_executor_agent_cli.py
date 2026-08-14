@@ -125,3 +125,27 @@ def test_agent_cli_deadline_none_keeps_base_timeout():
     ex.execute(system="SYS", task="TASK", tools=[], model="claude",
                cwd=Path("/tmp/wt"), on_event=lambda e: None)
     assert captured["timeout"] == 1800
+
+
+def test_codex_parse_extracts_nested_agent_message():
+    """codex streams {"type":"item.completed","item":{"type":"agent_message",
+    "text":...}} and ends on a turn event with no text. Reading only the last
+    line's top-level keys dumped the whole JSONL blob into state.json, making
+    every codex member's log unreadable."""
+    from setpoint.executor.agent_cli import _codex_parse
+    stdout = "\n".join([
+        '{"type":"thread.started","thread_id":"abc"}',
+        '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"first"}}',
+        '{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"I fixed the parser."}}',
+        '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}',
+    ])
+    text, usage = _codex_parse(stdout)
+    assert text == "I fixed the parser."   # last agent message wins
+    assert "thread.started" not in text
+    assert usage.input_tokens == 10 and usage.output_tokens == 5
+
+
+def test_codex_parse_falls_back_to_plain_text():
+    from setpoint.executor.agent_cli import _codex_parse
+    text, _ = _codex_parse("not json at all")
+    assert text == "not json at all"
