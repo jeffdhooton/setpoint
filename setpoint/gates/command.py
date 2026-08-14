@@ -50,6 +50,16 @@ class CommandGate(Gate):
                 feedback += f"\npartial output:\n{out}"
             return GateResult(passed=False, feedback=feedback, timed_out=True)
         passed = proc.returncode == 0
-        feedback = out if not passed else "all checks passed"
-        return GateResult(passed=passed, feedback=feedback or f"exit {proc.returncode}",
+        if passed:
+            return GateResult(passed=True, feedback="all checks passed",
+                              returncode=proc.returncode)
+        # Name the command on failure. A compound gate can fail on a later
+        # clause while the captured output reads like success —
+        # `a && b | grep -q c` prints a's "ok" and swallows the rest — so
+        # without this the agent sees success text next to a red gate and has
+        # no way to learn what the gate actually requires.
+        feedback = (f"verify command failed (exit {proc.returncode}):\n"
+                    f"  {self.command}\n")
+        feedback += f"\noutput:\n{out}" if out else "\n(no output)"
+        return GateResult(passed=False, feedback=feedback,
                           returncode=proc.returncode)

@@ -173,3 +173,21 @@ def test_command_gate_passes_env_to_the_verify_subprocess(tmp_path):
                        env={"SETPOINT_PORT_BASE": "31337"})
     res = gate.verify(cwd=tmp_path, on_event=lambda e: None)
     assert res.passed is True
+
+
+def test_failed_gate_feedback_names_the_command(tmp_path):
+    """A compound gate can fail on a later clause while the visible output
+    reads like success (`a && b | grep -q c`). Without the command in the
+    feedback the agent sees 'ok' and a red gate, and cannot act."""
+    from setpoint.gates.command import CommandGate
+    gate = CommandGate(command="echo ok && false")
+    res = gate.verify(cwd=tmp_path, on_event=lambda e: None)
+    assert res.passed is False
+    assert "echo ok && false" in res.feedback
+
+
+def test_passing_gate_feedback_does_not_name_the_command(tmp_path):
+    from setpoint.gates.command import CommandGate
+    res = CommandGate(command="true").verify(cwd=tmp_path, on_event=lambda e: None)
+    assert res.passed is True
+    assert "true" not in res.feedback
