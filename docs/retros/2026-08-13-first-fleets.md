@@ -53,26 +53,26 @@ run logs, and the operating session's own notes.
 
 ## Scry rooms
 
-12. **`room.get(run_id)` / list-rooms.** Bit us three separate times
+12. **`room.get(run_id)` / list-rooms.** **FIXED** — room.get + room.list, RPC and MCP. Bit us three separate times
     (viewer, wave relaunch, mid-run monitoring) before room.json
     manifests papered over it. The daemon should answer it natively.
-13. **Message IDs are already a de-facto need.** Reviewers hand-cite
+13. **Message IDs are already a de-facto need.** **FIXED** — reply_to on every message. Reviewers hand-cite
     "seq 24" / "at seq 8 you accepted" — agents invented structural
     citation because `scry_post` doesn't return an addressable id they
     can reference (seq exists; make it a first-class citation surface in
     prompts and tools, incl. reply-to).
-14. **Verdicts/severities/PR links are prose conventions.** APPROVED/
+14. **Verdicts/severities/PR links are prose conventions.** **FIXED** — verdict/severity/findings/pr_url fields. APPROVED/
     CHANGES, [P0]-[P3], and deliverable URLs all live in free text; the
     closing ceremony regex-harvests PRs. Add optional structured fields
     to `review` (verdict, severity, findings[]) and `handoff`/`status`
     (pr_url) posts.
-15. **`contract` kind is overloaded.** Self-contained tasks used it as a
+15. **`contract` kind is overloaded.** **FIXED** — publish kind added. Self-contained tasks used it as a
     one-way broadcast. Add a `publish` kind (or document the one-way
     use) so propose/accept semantics stay meaningful.
-16. **Long-lived `scry mcp` processes go stale across daemon upgrades.**
+16. **Long-lived `scry mcp` processes go stale across daemon upgrades.** **FIXED** — RoomProtocolVersion + restart advice.
     The operating session's MCP predated the room domain and couldn't
     see the new tools. Version-stamp the handshake; advertise restart.
-17. **Memory extraction reliability.** Same-day: silent `dormant` (env
+17. **Memory extraction reliability.** **FIXED** — loud dormancy, 2 repair retries, dead-letter file. Same-day: silent `dormant` (env
     key lost on daemon restart) and a fact lost to `extract: invalid
     JSON after retry`. Dormancy should be loud; extraction needs a
     second retry with repair + a dead-letter file instead of dropping.
