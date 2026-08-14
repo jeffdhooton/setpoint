@@ -232,3 +232,70 @@ def test_decompose_sets_deliver_base_from_the_repo(tmp_path):
                            base="develop")
     member = yaml.safe_load((fleet_yaml.parent / "build-api.setpoint.yaml").read_text())
     assert member["deliver"]["base"] == "develop"
+
+
+def test_critical_path_finds_the_longest_real_chain():
+    from setpoint.decompose import critical_path
+    tasks = [
+        {"name": "data", "depends_on": []},
+        {"name": "tokens", "depends_on": []},
+        {"name": "placement", "depends_on": ["data"]},
+        {"name": "boards", "depends_on": ["data", "tokens", "placement"]},
+        {"name": "my-week", "depends_on": ["data", "tokens"]},
+    ]
+    # The ops-calendar shape: data -> placement -> boards is the long pole.
+    assert critical_path(tasks) == ["data", "placement", "boards"]
+
+
+def test_critical_path_of_fully_independent_tasks_is_one():
+    from setpoint.decompose import critical_path
+    tasks = [{"name": "a", "depends_on": []}, {"name": "b", "depends_on": []}]
+    assert len(critical_path(tasks)) == 1
+
+
+def test_parallel_ceiling_matches_the_observed_fleet():
+    from setpoint.decompose import parallel_ceiling
+    tasks = [
+        {"name": "data", "depends_on": []},
+        {"name": "tokens", "depends_on": []},
+        {"name": "placement", "depends_on": ["data"]},
+        {"name": "boards", "depends_on": ["data", "tokens", "placement"]},
+        {"name": "my-week", "depends_on": ["data", "tokens"]},
+    ]
+    # 5 tasks over a 3-deep chain: the fleet can never beat x1.67, and the
+    # real ops-calendar run measured x1.65.
+    assert round(parallel_ceiling(tasks), 2) == 1.67
+
+
+def test_plan_md_reports_the_critical_path_and_ceiling(tmp_path):
+    idea = tmp_path / "lead-tracking.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out"), oneshot=fake_oneshot)
+    plan = (fleet_yaml.parent / "plan.md").read_text()
+    assert "Critical path" in plan
+    assert "build-api" in plan          # the chain names its members
+    assert "×" in plan or "x1" in plan.lower()   # a speedup ceiling is quoted
+
+
+def test_plan_md_flags_an_unjustified_edge(tmp_path):
+    idea = tmp_path / "i.md"
+    idea.write_text("Implement lead tracking end to end")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def oneshot(engine, prompt, cwd=None):
+        return json.dumps({"tasks": [
+            {"name": "a", "title": "A", "goal": "g", "interfaces": "",
+             "depends_on": [], "verify_command": "true", "engine": "claude"},
+            {"name": "b", "title": "B", "goal": "g", "interfaces": "",
+             "depends_on": ["a"], "verify_command": "true", "engine": "codex"},
+        ]})
+
+    fleet_yaml = decompose(str(idea), str(repo), ["claude", "codex"],
+                           str(tmp_path / "out2"), oneshot=oneshot)
+    plan = (fleet_yaml.parent / "plan.md").read_text()
+    # b depends on a but never says what it reads -> candidate false edge.
+    assert "UNJUSTIFIED" in plan

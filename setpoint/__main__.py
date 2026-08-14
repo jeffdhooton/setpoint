@@ -295,6 +295,25 @@ def cmd_fleet(rest: list[str]) -> int:
                       "repo's required check.", file=sys.stderr)
         fleet_path = decompose(idea, repo, engines, out, repo_checks=checks or None)
         print(f"fleet bundle written to {fleet_path.parent}")
+
+        # Say the shape of the fan-out at the CLI, not only in plan.md. A
+        # near-serial fleet is the one thing worth knowing before approving,
+        # and it is easy to miss by eye in a list of tasks.
+        import json as _json
+        from setpoint.decompose import critical_path, parallel_ceiling, unjustified_edges
+        tasks = _json.loads((fleet_path.parent / "tasks.json").read_text())["tasks"]
+        chain = critical_path(tasks)
+        ceiling = parallel_ceiling(tasks)
+        print(f"  {len(tasks)} tasks · critical path {len(chain)} deep "
+              f"({' → '.join(chain)}) · best possible speedup ×{ceiling:.2f}")
+        for consumer, producer in unjustified_edges(tasks):
+            print(f"  ⚠ {consumer} depends on {producer} without saying what it "
+                  f"reads — likely a false edge; cutting it beats adding an agent",
+                  file=sys.stderr)
+        if ceiling < 1.5 and len(tasks) > 2:
+            print("  ⚠ this fleet is close to serial — consider re-cutting the "
+                  "tasks, or running it as a single loop", file=sys.stderr)
+
         print(f"review plan.md, then: setpoint fleet run {fleet_path}")
         return 0
     if sub == "ls":

@@ -27,7 +27,19 @@ review when your gate passes, and mark your task done or abandoned. All room
 access is through your scry_* MCP tools.
 Your reviewer is already assigned: {reviewer}. Address your review request to
 that agent by name in your task thread — do not broadcast to the room and do
-not ping other agents hoping someone picks it up."""
+not ping other agents hoping someone picks it up.
+
+GIT DISCIPLINE — these are hard rules, not suggestions:
+- NEVER `git stash`, `git reset`, `git checkout -- .`, or any command that
+  discards working-tree state. Your worktree carries work from your own earlier
+  iterations; a worker on this fleet already destroyed its previous iteration's
+  commit this way and only noticed by accident.
+- Before you write, run `git log --oneline -5` and `git status`. If a previous
+  iteration already committed part of this task, build ON it — do not restart.
+- Commit specific files. No `git add -A` sweeps that hoover up another
+  process's artifacts.
+- Never rebase, force-push, or rewrite history. Your branch is yours alone;
+  the trunk is nobody's to move."""
 
 REVIEW_PROMPT = """You are the cross-engine reviewer for a fleet task.
 Using your scry room MCP tools: read the channel thread for task {task_id}

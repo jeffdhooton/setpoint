@@ -578,3 +578,21 @@ def test_room_context_names_the_reviewer(tmp_path):
               room_client=FakeRoom(), oneshot=lambda e, p, cwd=None: "")
     assert "codex-reviewer" in goals["api"]
     assert "do not broadcast" in goals["api"].lower()
+
+
+def test_room_context_freezes_the_git_discipline_rule(tmp_path):
+    """A worker overwrote its own previous iteration's commit and caught it by
+    luck. Parallel agents plus a loop that re-enters the same worktree needs
+    the destructive git verbs ruled out explicitly."""
+    goals = {}
+
+    def capture(spec, *, fresh=False, ui=None, abort_check=None, runs_root=None):
+        from types import SimpleNamespace
+        goals[spec.name] = spec.goal
+        return SimpleNamespace(status="passed")
+
+    run_fleet(str(_write_bundle(tmp_path)), run_loop=capture,
+              room_client=FakeRoom(), oneshot=lambda e, p, cwd=None: "")
+    g = goals["api"]
+    assert "git stash" in g and "git reset" in g
+    assert "--hard" in g or "never" in g.lower()
