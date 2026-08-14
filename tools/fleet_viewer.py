@@ -138,7 +138,13 @@ def state(fleet_name):
     frozen = manifest.get("final")
     for m in manifest.get("members", {}):
         if frozen and m in frozen:
-            members[m] = {"status": frozen[m], "iters": 0}
+            # The frozen status is authoritative (a later wave can overwrite
+            # live run state), but the iteration count is not carried in
+            # report.md — read it from the member's own state so an ended
+            # fleet does not claim every member ran zero iterations.
+            d = member_state(fleet_name, m)
+            members[m] = {"status": frozen[m],
+                          "iters": len(d.get("iters", [])) if d else 0}
             continue
         d = member_state(fleet_name, m)
         members[m] = ({"status": d.get("status", "?"), "iters": len(d.get("iters", []))}
