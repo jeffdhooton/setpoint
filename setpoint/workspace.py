@@ -31,12 +31,24 @@ class Worktree:
         # starting point is in question.
         self.base_ref: str | None = None
 
+    def _has_origin(self) -> bool:
+        remotes = subprocess.run(
+            ["git", "remote"], cwd=self.repo, capture_output=True, text=True,
+        )
+        return "origin" in remotes.stdout.split()
+
     def _resolve_base_ref(self) -> str:
         """Fetch and return `origin/<base>`, or "HEAD" when that is not
         available. Cutting from the local checkout is the bug this guards:
         every worktree in the first fleet started 236 commits behind origin.
-        We degrade to HEAD rather than failing, because local test repos and
-        remote-less scratch repos are legitimate."""
+        We degrade to HEAD only for repos with no `origin` at all, because
+        local test repos and remote-less scratch repos are legitimate.
+
+        When `origin` exists and the fetch fails we raise instead. A failed
+        fetch against a real remote means we cannot know the remote state, and
+        silently substituting a possibly-stale local HEAD is the exact bug this
+        guards against — it produced three PRs gated against a four-commit-old
+        tree, whose greens proved nothing about the branch they targeted."""
         if not self.base:
             return "HEAD"
         fetch = subprocess.run(
@@ -44,9 +56,16 @@ class Worktree:
             cwd=self.repo, capture_output=True, text=True,
         )
         if fetch.returncode != 0:
+            if self._has_origin():
+                raise RuntimeError(
+                    f"`git fetch origin {self.base}` failed in {self.repo} "
+                    f"(exit {fetch.returncode}). Refusing to branch from local "
+                    f"HEAD: origin exists, so the local base may be stale and "
+                    f"the run would verify against the wrong tree. Fix the "
+                    f"fetch and retry.\n{fetch.stderr.strip()}")
             print(f"setpoint: `git fetch origin {self.base}` failed in {self.repo} "
-                  f"— branching from local HEAD instead:\n{fetch.stderr.strip()}",
-                  file=sys.stderr)
+                  f"and the repo has no `origin` — branching from local HEAD:\n"
+                  f"{fetch.stderr.strip()}", file=sys.stderr)
             return "HEAD"
         verify = subprocess.run(
             ["git", "rev-parse", "--verify", f"origin/{self.base}"],

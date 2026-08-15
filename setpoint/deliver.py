@@ -12,6 +12,16 @@ from pathlib import Path
 # be able to trip a text-based denylist).
 ALLOWED_VERBS: tuple[str, ...] = ("git", "gh", "gog")
 
+# Files setpoint and its workers write into the worktree: the derived port
+# base, and the worker's own orientation cache. They are ours, not the
+# repo's. `git add -A` swept both into a customer PR before this existed.
+# Pathspec exclusion rather than .gitignore or info/exclude: the repo's
+# ignore file is the project's tracked content, and git reads info/exclude
+# from the COMMON git dir, so a linked worktree cannot scope it to itself.
+SCAFFOLDING_EXCLUDES: tuple[str, ...] = (":(exclude).setpoint-ports.env",
+                                         ":(exclude).setpoint/**",
+                                         ":(exclude).setpoint")
+
 
 @dataclass
 class DeliverResult:
@@ -90,7 +100,7 @@ def deliver(spec, cwd: Path, state, runner=subprocess.run, report_dir: Path | No
     actions: list[str] = []
 
     _run(runner, ["git", "checkout", "-B", branch], cwd)
-    _run(runner, ["git", "add", "-A"], cwd)
+    _run(runner, ["git", "add", "-A", "--", ".", *SCAFFOLDING_EXCLUDES], cwd)
     _run(runner, ["git", "commit", "-m", f"setpoint: {spec.name} — {spec.goal[:60]}"], cwd)
     actions.append(f"branch {branch}")
 

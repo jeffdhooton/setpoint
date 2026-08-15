@@ -198,3 +198,20 @@ def test_deliver_creates_a_pr_when_none_exists(tmp_path):
     res = deliver(spec, tmp_path, _passed_state(), runner=fake_run)
     assert res.pr_url == "https://github.com/x/y/pull/8"
     assert "pr" in res.actions
+
+
+def test_deliver_never_commits_setpoint_scaffolding(tmp_path):
+    """`git add -A` swept .setpoint-ports.env and .setpoint/orientation.md
+    into a customer PR. Those are setpoint's own files."""
+    from setpoint.deliver import deliver
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return _FakeCompleted(0, "")
+
+    deliver(_spec({"push": False, "pr": False}), tmp_path, _passed_state(), runner=fake_run)
+    add = next(a for a in calls if a[:2] == ["git", "add"])
+    joined = " ".join(add)
+    assert ":(exclude).setpoint-ports.env" in joined
+    assert ":(exclude).setpoint/**" in joined

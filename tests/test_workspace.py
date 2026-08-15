@@ -168,3 +168,4 @@ def test_worktree_prefers_local_base_when_origin_is_behind(tmp_path):
     assert (path / "local-only.txt").exists(), "unpushed local work was discarded"
     assert wt.base_ref == "main"
     wt.cleanup()
+
